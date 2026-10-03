@@ -1,0 +1,57 @@
+name: Build release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build universal macOS app
+        run: ./scripts/build-app.sh
+      - name: Package
+        run: ditto -c -k --keepParent "dist/Codex Usage Bar.app" "Codex-Usage-Bar-macOS.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macOS
+          path: Codex-Usage-Bar-macOS.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: Prepare Windows icon
+        shell: pwsh
+        run: ./scripts/make-ico.ps1
+      - name: Build portable Windows app
+        shell: pwsh
+        run: dotnet publish Windows/CodexUsageBar.Windows.csproj -c Release -r win-x64 -o publish
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path publish/CodexUsageBar.exe -DestinationPath Codex-Usage-Bar-Windows-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Windows-x64
+          path: Codex-Usage-Bar-Windows-x64.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" ./*.zip --generate-notes --title "Codex Usage Bar ${GITHUB_REF_NAME}"

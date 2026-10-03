@@ -1,0 +1,11 @@
+.build/
+.swiftpm/
+dist/
+publish/
+bin/
+obj/
+Windows/Assets/AppIcon.ico
+.DS_Store
+AGENTS.md
+sources/
+ECC/
