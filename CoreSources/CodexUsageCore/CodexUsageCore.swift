@@ -306,6 +306,10 @@ public struct MenuBarTitleFormatter: Sendable {
     }
 
     public func string(from snapshot: UsageSnapshot, mode: MenuBarDisplayMode) -> String {
+        if mode == .battery {
+            return snapshot.primary.map { "\($0.remainingPercent)%" } ?? "—"
+        }
+
         var parts: [String] = []
         if let primary = snapshot.primary { parts.append(part(primary, shortLabel: language == .english ? "5h" : "5ч", weekly: false)) }
         if mode == .expanded, let secondary = snapshot.secondary {

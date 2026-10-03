@@ -89,7 +89,7 @@ final class UsageModelsTests: XCTestCase {
 
         XCTAssertEqual(
             formatter.string(from: snapshot, mode: .battery),
-            "5h 67% until 01:35"
+            "67%"
         )
 
         let russianFormatter = MenuBarTitleFormatter(
@@ -106,6 +106,11 @@ final class UsageModelsTests: XCTestCase {
         XCTAssertEqual(
             russianFormatter.string(from: snapshot, mode: .expanded),
             "5ч 67% до 01:35 · нед 53% до 6 окт., 20:42"
+        )
+
+        XCTAssertEqual(
+            russianFormatter.string(from: snapshot, mode: .battery),
+            "67%"
         )
     }
 }

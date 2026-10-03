@@ -70,6 +70,17 @@ final class UsageViewModel: ObservableObject {
             return isRefreshing ? "…" : "—"
         }
 
+        if displayMode == .battery,
+           let primary = snapshot.primary,
+           primary.remainingPercent == 0,
+           let resetDate = primary.resetsAt {
+            return LimitCountdownFormatter.compact(
+                until: resetDate,
+                now: date,
+                language: language
+            )
+        }
+
         if snapshot.primary?.remainingPercent == 0 ||
             (displayMode == .expanded && snapshot.secondary?.remainingPercent == 0) {
             var parts: [String] = []
@@ -96,21 +107,26 @@ final class UsageViewModel: ObservableObject {
             return "arrow.clockwise"
         }
 
-        let minimum = [snapshot.primary, snapshot.secondary]
+        if displayMode == .battery, let percentage = snapshot.primary?.remainingPercent {
+            switch percentage {
+            case 76...: return "battery.100percent"
+            case 51...: return "battery.75percent"
+            case 26...: return "battery.50percent"
+            case 11...: return "battery.25percent"
+            default: return "battery.0percent"
+            }
+        }
+
+        let visibleWindows = displayMode == .expanded
+            ? [snapshot.primary, snapshot.secondary]
+            : [snapshot.primary]
+        let minimum = visibleWindows
             .compactMap { $0?.remainingPercent }
             .min() ?? 100
 
         if minimum <= 10 { return "gauge.with.dots.needle.100percent" }
         if minimum <= 30 { return "gauge.with.dots.needle.67percent" }
         return "gauge.with.dots.needle.33percent"
-    }
-
-    var primaryRemainingPercent: Int? {
-        snapshot?.primary?.remainingPercent
-    }
-
-    var primaryResetDate: Date? {
-        snapshot?.primary?.resetsAt
     }
 
     var errorMessage: String? {
@@ -173,14 +189,6 @@ final class UsageViewModel: ObservableObject {
         }
 
         isRefreshing = false
-    }
-
-    func toggleDisplayMode() {
-        setDisplayMode(displayMode == .expanded ? .compact : .expanded)
-    }
-
-    func toggleBatteryMode() {
-        setDisplayMode(displayMode == .battery ? .compact : .battery)
     }
 
     func setDisplayMode(_ mode: MenuBarDisplayMode) {

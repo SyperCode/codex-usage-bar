@@ -18,7 +18,16 @@
 
 ## Скачать
 
-Откройте раздел **Releases** справа на странице репозитория или перейдите в [последний релиз](../../releases/latest).
+<p>
+  <a href="https://github.com/SyperCode/codex-usage-bar/releases/latest/download/Codex-Usage-Bar-macOS.zip">
+    <img alt="Скачать для macOS" src="https://img.shields.io/badge/Download_for-macOS-111111?style=for-the-badge&logo=apple&logoColor=white">
+  </a>
+  <a href="https://github.com/SyperCode/codex-usage-bar/releases/latest/download/Codex-Usage-Bar-Windows-x64.zip">
+    <img alt="Скачать для Windows" src="https://img.shields.io/badge/Download_for-Windows-0078D4?style=for-the-badge&logo=windows&logoColor=white">
+  </a>
+</p>
+
+Кнопки скачивают готовое приложение из [последнего релиза](../../releases/latest).
 
 Выберите файл для своей системы:
 

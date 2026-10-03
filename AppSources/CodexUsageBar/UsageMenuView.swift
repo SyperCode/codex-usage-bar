@@ -97,47 +97,7 @@ struct UsageMenuView: View {
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 6) {
-                Button {
-                    viewModel.toggleBatteryMode()
-                } label: {
-                    Image(systemName: "battery.100percent")
-                }
-                .buttonStyle(
-                    GlassIconButtonStyle(
-                        isActive: viewModel.displayMode == .battery,
-                        accent: viewModel.accentChoice.color
-                    )
-                )
-                .help(
-                    viewModel.displayMode == .battery
-                        ? t("Use text view", "Текстовый режим")
-                        : t("Use battery view", "Режим батареи")
-                )
-
-                Button {
-                    viewModel.toggleDisplayMode()
-                } label: {
-                    Image(
-                        systemName: viewModel.displayMode == .expanded
-                            ? "arrow.down.right.and.arrow.up.left"
-                            : "arrow.up.left.and.arrow.down.right"
-                    )
-                }
-                .buttonStyle(
-                    GlassIconButtonStyle(
-                        isActive: viewModel.displayMode == .expanded,
-                        accent: viewModel.accentChoice.color
-                    )
-                )
-                .help(
-                    viewModel.displayMode == .expanded
-                        ? t("Compact menu bar", "Свернуть строку меню")
-                        : t("Expand menu bar", "Развернуть строку меню")
-                )
-
-                RefreshActionButton(viewModel: viewModel)
-            }
+            RefreshActionButton(viewModel: viewModel)
         }
     }
 
@@ -353,19 +313,19 @@ struct UsageMenuView: View {
             sectionTitle(t("BEHAVIOR", "ПОВЕДЕНИЕ"))
 
             VStack(alignment: .leading, spacing: 8) {
-                Label(t("Menu bar style", "Вид строки меню"), systemImage: "menubar.rectangle")
+                Label(t("Menu bar content", "Данные в строке меню"), systemImage: "menubar.rectangle")
                     .font(.callout)
 
                 Picker(
-                    t("Menu bar style", "Вид строки меню"),
+                    t("Menu bar content", "Данные в строке меню"),
                     selection: Binding(
                         get: { viewModel.displayMode },
                         set: { viewModel.setDisplayMode($0) }
                     )
                 ) {
-                    Text(t("Battery", "Батарея")).tag(MenuBarDisplayMode.battery)
-                    Text(t("Compact", "Компактно")).tag(MenuBarDisplayMode.compact)
-                    Text(t("Expanded", "Расширенно")).tag(MenuBarDisplayMode.expanded)
+                    Text(t("Percent", "Процент")).tag(MenuBarDisplayMode.battery)
+                    Text(t("5 hours", "5 часов")).tag(MenuBarDisplayMode.compact)
+                    Text(t("All limits", "Все лимиты")).tag(MenuBarDisplayMode.expanded)
                 }
                 .labelsHidden()
                 .pickerStyle(.segmented)
