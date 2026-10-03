@@ -18,25 +18,23 @@ private struct MenuBarStatusLabel: View {
     @ObservedObject var viewModel: UsageViewModel
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            if viewModel.displayMode == .battery {
-                BatteryMenuBarLabel(
-                    percentage: viewModel.primaryRemainingPercent,
-                    resetDate: viewModel.primaryResetDate,
-                    now: context.date,
-                    language: viewModel.language
-                )
-            } else {
-                HStack(spacing: 5) {
-                    Image(systemName: viewModel.statusSymbol)
-                        .imageScale(.medium)
+        if viewModel.displayMode == .battery {
+            BatteryMenuBarLabel(
+                percentage: viewModel.primaryRemainingPercent,
+                resetDate: viewModel.primaryResetDate,
+                now: viewModel.currentDate,
+                language: viewModel.language
+            )
+        } else {
+            HStack(spacing: 5) {
+                Image(systemName: viewModel.statusSymbol)
+                    .imageScale(.medium)
 
-                    Text(viewModel.menuBarTitle(at: context.date))
-                        .font(.system(size: 12, weight: .medium))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
+                Text(viewModel.menuBarTitle(at: viewModel.currentDate))
+                    .font(.system(size: 12, weight: .medium))
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
             }
         }
     }

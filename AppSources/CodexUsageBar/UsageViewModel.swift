@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 final class UsageViewModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot?
+    @Published private(set) var currentDate = Date()
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastUpdated: Date?
     @Published private(set) var lastError: Error?
@@ -18,6 +19,7 @@ final class UsageViewModel: ObservableObject {
     private let service = CodexUsageService()
     private let defaults: UserDefaults
     private var refreshTimer: Timer?
+    private var clockTimer: Timer?
 
     private enum PreferenceKey {
         static let displayMode = "menuBarDisplayMode"
@@ -55,10 +57,12 @@ final class UsageViewModel: ObservableObject {
         applyAppAppearance()
         Task { await refresh() }
         configureAutoRefreshTimer()
+        configureClockTimer()
     }
 
     deinit {
         refreshTimer?.invalidate()
+        clockTimer?.invalidate()
     }
 
     func menuBarTitle(at date: Date = Date()) -> String {
@@ -242,6 +246,17 @@ final class UsageViewModel: ObservableObject {
         }
         RunLoop.main.add(timer, forMode: .common)
         refreshTimer = timer
+    }
+
+    private func configureClockTimer() {
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.currentDate = Date()
+            }
+        }
+        timer.tolerance = 2
+        RunLoop.main.add(timer, forMode: .common)
+        clockTimer = timer
     }
 
     private func menuBarPart(
