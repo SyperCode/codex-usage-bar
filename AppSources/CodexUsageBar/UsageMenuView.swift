@@ -78,7 +78,7 @@ struct UsageMenuView: View {
 
     private var header: some View {
         HStack(spacing: 11) {
-            Image(nsImage: appIcon)
+            Image(nsImage: NSApplication.shared.applicationIconImage)
                 .resizable()
                 .interpolation(.high)
                 .antialiased(true)
@@ -139,13 +139,6 @@ struct UsageMenuView: View {
                 RefreshActionButton(viewModel: viewModel)
             }
         }
-    }
-
-    private var appIcon: NSImage {
-        guard let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
-              let image = NSImage(contentsOf: url)
-        else { return NSApplication.shared.applicationIconImage }
-        return image
     }
 
     private var tabSwitcher: some View {
