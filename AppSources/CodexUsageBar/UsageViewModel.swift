@@ -276,20 +276,7 @@ final class UsageViewModel: ObservableObject {
             return "\(label) \(LimitCountdownFormatter.compact(until: resetDate, now: now, language: language))"
         }
 
-        guard let resetDate = window.resetsAt else {
-            return "\(label) \(window.remainingPercent)%"
-        }
-
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: language == .english ? "en_US" : "ru_RU")
-        formatter.timeZone = .current
-        formatter.dateFormat = label == language.text("wk", "нед")
-            ? (language == .english ? "MMM d, HH:mm" : "d MMM, HH:mm")
-            : "HH:mm"
-        return language.text(
-            "\(label) \(window.remainingPercent)% until \(formatter.string(from: resetDate))",
-            "\(label) \(window.remainingPercent)% до \(formatter.string(from: resetDate))"
-        )
+        return "\(label) \(window.remainingPercent)%"
     }
 
 }

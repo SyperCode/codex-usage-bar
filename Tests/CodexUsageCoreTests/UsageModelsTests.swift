@@ -54,7 +54,7 @@ final class UsageModelsTests: XCTestCase {
         )
     }
 
-    func testMenuBarTitleIncludesBothPercentagesAndResetTimes() {
+    func testMenuBarTitlesStayCompactAndShowBothLimits() {
         let snapshot = UsageSnapshot(
             primary: UsageWindow(
                 usedPercent: 33,
@@ -79,7 +79,7 @@ final class UsageModelsTests: XCTestCase {
 
         XCTAssertEqual(
             formatter.string(from: snapshot, mode: .expanded),
-            "5h 67% until 01:35 · wk 53% until Oct 6, 20:42"
+            "5h 67% · wk 53%"
         )
 
         XCTAssertEqual(
@@ -105,7 +105,7 @@ final class UsageModelsTests: XCTestCase {
 
         XCTAssertEqual(
             russianFormatter.string(from: snapshot, mode: .expanded),
-            "5ч 67% до 01:35 · нед 53% до 6 окт., 20:42"
+            "5ч 67% · нед 53%"
         )
 
         XCTAssertEqual(

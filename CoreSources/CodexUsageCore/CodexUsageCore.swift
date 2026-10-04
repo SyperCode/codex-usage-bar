@@ -310,21 +310,25 @@ public struct MenuBarTitleFormatter: Sendable {
             return snapshot.primary.map { "\($0.remainingPercent)%" } ?? "—"
         }
 
-        var parts: [String] = []
-        if let primary = snapshot.primary { parts.append(part(primary, shortLabel: language == .english ? "5h" : "5ч", weekly: false)) }
-        if mode == .expanded, let secondary = snapshot.secondary {
-            parts.append(part(secondary, shortLabel: language == .english ? "wk" : "нед", weekly: true))
+        if mode == .expanded {
+            let primary = snapshot.primary.map { "\(language == .english ? "5h" : "5ч") \($0.remainingPercent)%" }
+            let secondary = snapshot.secondary.map { "\(language == .english ? "wk" : "нед") \($0.remainingPercent)%" }
+            let parts = [primary, secondary].compactMap { $0 }
+            return parts.isEmpty ? "—" : parts.joined(separator: " · ")
         }
+
+        var parts: [String] = []
+        if let primary = snapshot.primary { parts.append(part(primary, shortLabel: language == .english ? "5h" : "5ч")) }
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 
-    private func part(_ window: UsageWindow, shortLabel: String, weekly: Bool) -> String {
+    private func part(_ window: UsageWindow, shortLabel: String) -> String {
         var text = "\(shortLabel) \(window.remainingPercent)%"
         guard let reset = window.resetsAt else { return text }
         let formatter = DateFormatter()
         formatter.locale = locale
         formatter.timeZone = timeZone
-        formatter.dateFormat = weekly ? (language == .english ? "MMM d, HH:mm" : "d MMM, HH:mm") : "HH:mm"
+        formatter.dateFormat = "HH:mm"
         text += language == .english ? " until \(formatter.string(from: reset))" : " до \(formatter.string(from: reset))"
         return text
     }

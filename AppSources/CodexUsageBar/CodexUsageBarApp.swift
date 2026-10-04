@@ -27,7 +27,8 @@ private struct MenuBarStatusLabel: View {
         .font(.system(size: 12, weight: .medium))
         .monospacedDigit()
         .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
+        .truncationMode(.tail)
+        .frame(maxWidth: 160, alignment: .leading)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             viewModel.language.text("Codex usage", "Лимиты Codex")
