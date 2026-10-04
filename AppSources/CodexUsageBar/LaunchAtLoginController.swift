@@ -3,8 +3,17 @@ import ServiceManagement
 
 @MainActor
 final class LaunchAtLoginController: ObservableObject {
-    @Published private(set) var isEnabled = SMAppService.mainApp.status == .enabled
-    @Published private(set) var errorMessage: String?
+    enum Issue {
+        case requiresApproval
+        case registrationFailed
+    }
+
+    @Published private(set) var isEnabled = false
+    @Published private(set) var issue: Issue?
+
+    init() {
+        updateStatus()
+    }
 
     func setEnabled(_ enabled: Bool) {
         do {
@@ -13,11 +22,16 @@ final class LaunchAtLoginController: ObservableObject {
             } else {
                 try SMAppService.mainApp.unregister()
             }
-            isEnabled = SMAppService.mainApp.status == .enabled
-            errorMessage = nil
+            updateStatus()
         } catch {
-            isEnabled = SMAppService.mainApp.status == .enabled
-            errorMessage = "Move the app to Applications first."
+            updateStatus()
+            issue = .registrationFailed
         }
+    }
+
+    private func updateStatus() {
+        let status = SMAppService.mainApp.status
+        isEnabled = status == .enabled
+        issue = status == .requiresApproval ? .requiresApproval : nil
     }
 }

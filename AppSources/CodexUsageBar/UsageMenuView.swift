@@ -355,7 +355,7 @@ struct UsageMenuView: View {
             }
 
             Toggle(
-                t("Launch at login", "Запускать при входе"),
+                t("Launch after macOS login", "Запускать после входа в macOS"),
                 isOn: Binding(
                     get: { launchAtLogin.isEnabled },
                     set: { launchAtLogin.setEnabled($0) }
@@ -364,16 +364,11 @@ struct UsageMenuView: View {
             .toggleStyle(.switch)
             .controlSize(.small)
 
-            if launchAtLogin.errorMessage != nil {
-                Text(
-                    t(
-                        "Move the app to Applications first.",
-                        "Сначала переместите приложение в папку «Программы»."
-                    )
-                )
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let issue = launchAtLogin.issue {
+                Text(launchAtLoginMessage(for: issue))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             Divider().opacity(0.42)
@@ -386,6 +381,21 @@ struct UsageMenuView: View {
         }
         .padding(13)
         .glassPanel(cornerRadius: 14)
+    }
+
+    private func launchAtLoginMessage(for issue: LaunchAtLoginController.Issue) -> String {
+        switch issue {
+        case .requiresApproval:
+            return t(
+                "Allow Codex Usage Bar in System Settings → General → Login Items.",
+                "Разрешите Codex Usage Bar в «Системные настройки → Основные → Объекты входа»."
+            )
+        case .registrationFailed:
+            return t(
+                "Move the app to Applications and try again.",
+                "Переместите приложение в папку «Программы» и попробуйте снова."
+            )
+        }
     }
 
     private var footer: some View {
