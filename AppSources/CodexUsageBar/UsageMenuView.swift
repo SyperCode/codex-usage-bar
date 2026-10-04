@@ -375,6 +375,14 @@ struct UsageMenuView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+
+            Divider().opacity(0.42)
+
+            settingsRow(t("Version", "Версия"), symbol: "info.circle") {
+                Text("v\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—")")
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
         }
         .padding(13)
         .glassPanel(cornerRadius: 14)
