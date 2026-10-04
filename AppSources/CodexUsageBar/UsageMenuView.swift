@@ -48,6 +48,16 @@ struct UsageMenuView: View {
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .opacity(isDarkAppearance ? 0.48 : 0.72)
+
+            LinearGradient(
+                colors: [
+                    viewModel.accentChoice.color.opacity(isDarkAppearance ? 0.24 : 0.15),
+                    viewModel.accentChoice.color.opacity(isDarkAppearance ? 0.07 : 0.035),
+                    .clear
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
         }
         .ignoresSafeArea()
     }
