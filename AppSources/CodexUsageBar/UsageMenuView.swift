@@ -48,22 +48,6 @@ struct UsageMenuView: View {
             Rectangle()
                 .fill(.ultraThinMaterial)
                 .opacity(isDarkAppearance ? 0.48 : 0.72)
-
-            LinearGradient(
-                colors: [
-                    viewModel.accentChoice.color.opacity(isDarkAppearance ? 0.24 : 0.15),
-                    viewModel.accentChoice.color.opacity(isDarkAppearance ? 0.07 : 0.035),
-                    Color.clear
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-
-            Circle()
-                .fill(viewModel.accentChoice.color.opacity(isDarkAppearance ? 0.18 : 0.12))
-                .frame(width: 190, height: 190)
-                .blur(radius: 58)
-                .offset(x: 145, y: -155)
         }
         .ignoresSafeArea()
     }
@@ -84,7 +68,6 @@ struct UsageMenuView: View {
                 .antialiased(true)
                 .aspectRatio(contentMode: .fit)
             .frame(width: 38, height: 38)
-            .shadow(color: .black.opacity(0.14), radius: 7, y: 3)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Codex Usage")
@@ -280,9 +263,8 @@ struct UsageMenuView: View {
                         } label: {
                             ZStack {
                                 Circle()
-                                    .fill(choice.color.gradient)
+                                    .fill(choice.color)
                                     .frame(width: 28, height: 28)
-                                    .shadow(color: choice.color.opacity(0.28), radius: 4, y: 2)
 
                                 if viewModel.accentChoice == choice {
                                     Image(systemName: "checkmark")
@@ -290,7 +272,6 @@ struct UsageMenuView: View {
                                         .foregroundStyle(.white)
                                 }
                             }
-                            .scaleEffect(viewModel.accentChoice == choice ? 1.08 : 1)
                         }
                         .buttonStyle(.plain)
                         .help(accentName(choice))
@@ -690,15 +671,8 @@ private struct UsageProgressBar: View {
                     .fill(.primary.opacity(0.09))
 
                 Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.7), color],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .fill(color)
                     .frame(width: proxy.size.width * fraction)
-                    .shadow(color: color.opacity(0.22), radius: 4)
             }
         }
         .frame(height: 7)
@@ -751,10 +725,5 @@ private struct GlassPanelModifier: ViewModifier {
                         )
                     }
             }
-            .shadow(
-                color: .black.opacity(colorScheme == .dark ? 0.16 : 0.07),
-                radius: 12,
-                y: 5
-            )
     }
 }
