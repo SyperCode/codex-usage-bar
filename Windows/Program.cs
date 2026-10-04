@@ -19,19 +19,50 @@ internal sealed class TrayApplication : ApplicationContext
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunValue = "Codex Usage Bar";
+    private const string SettingsKey = @"Software\Migalev\CodexUsageBar";
+    private const string AutoRefreshValue = "AutoRefreshEnabled";
+    private const string RefreshIntervalValue = "RefreshIntervalMinutes";
     private readonly bool russian = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ru";
     private readonly NotifyIcon tray;
     private readonly ToolStripMenuItem fiveHour;
     private readonly ToolStripMenuItem weekly;
     private readonly ToolStripMenuItem updated;
+    private readonly ToolStripMenuItem autoRefresh;
+    private readonly ToolStripMenuItem refreshInterval;
     private readonly ToolStripMenuItem launchAtLogin;
     private readonly System.Windows.Forms.Timer timer;
+    private bool refreshInProgress;
 
     public TrayApplication()
     {
+        var savedRefreshInterval = ReadRefreshInterval();
+        timer = new System.Windows.Forms.Timer {
+            Interval = savedRefreshInterval * 60 * 1000,
+            Enabled = false
+        };
+        timer.Tick += async (_, _) => await RefreshAsync();
+
         fiveHour = new ToolStripMenuItem(T("5-hour limit: loading…", "5-часовой лимит: загрузка…")) { Enabled = false };
         weekly = new ToolStripMenuItem(T("Weekly limit: loading…", "Недельный лимит: загрузка…")) { Enabled = false };
         updated = new ToolStripMenuItem(T("Not updated yet", "Ещё не обновлено")) { Enabled = false };
+        autoRefresh = new ToolStripMenuItem(T("Auto refresh", "Автообновление")) {
+            CheckOnClick = true,
+            Checked = ReadAutoRefreshEnabled()
+        };
+        autoRefresh.CheckedChanged += (_, _) => SetAutoRefresh(autoRefresh.Checked);
+
+        refreshInterval = new ToolStripMenuItem(T("Refresh interval", "Интервал обновления"));
+        foreach (var minutes in new[] { 1, 5, 15 })
+        {
+            var intervalItem = new ToolStripMenuItem(IntervalTitle(minutes)) {
+                Checked = minutes == savedRefreshInterval,
+                Tag = minutes
+            };
+            intervalItem.Click += (_, _) => SetRefreshInterval(minutes);
+            refreshInterval.DropDownItems.Add(intervalItem);
+        }
+        refreshInterval.Enabled = autoRefresh.Checked;
+
         launchAtLogin = new ToolStripMenuItem(T("Launch with Windows", "Запускать вместе с Windows")) {
             CheckOnClick = true,
             Checked = IsLaunchAtLoginEnabled()
@@ -46,7 +77,19 @@ internal sealed class TrayApplication : ApplicationContext
         quit.Click += (_, _) => ExitThread();
 
         var menu = new ContextMenuStrip();
-        menu.Items.AddRange([fiveHour, weekly, updated, new ToolStripSeparator(), refresh, openUsage, launchAtLogin, new ToolStripSeparator(), quit]);
+        menu.Items.AddRange([
+            fiveHour,
+            weekly,
+            updated,
+            new ToolStripSeparator(),
+            refresh,
+            autoRefresh,
+            refreshInterval,
+            openUsage,
+            launchAtLogin,
+            new ToolStripSeparator(),
+            quit
+        ]);
         tray = new NotifyIcon {
             Icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application,
             Text = "Codex Usage Bar",
@@ -54,8 +97,7 @@ internal sealed class TrayApplication : ApplicationContext
             Visible = true
         };
 
-        timer = new System.Windows.Forms.Timer { Interval = 5 * 60 * 1000, Enabled = true };
-        timer.Tick += async (_, _) => await RefreshAsync();
+        timer.Enabled = autoRefresh.Checked;
         _ = RefreshAsync();
     }
 
@@ -69,6 +111,8 @@ internal sealed class TrayApplication : ApplicationContext
 
     private async Task RefreshAsync()
     {
+        if (refreshInProgress) return;
+        refreshInProgress = true;
         fiveHour.Text = T("5-hour limit: updating…", "5-часовой лимит: обновление…");
         try
         {
@@ -85,7 +129,41 @@ internal sealed class TrayApplication : ApplicationContext
             updated.Text = T("Open Codex or ChatGPT and sign in", "Откройте Codex или ChatGPT и войдите в аккаунт");
             tray.Text = "Codex Usage Bar — " + T("error", "ошибка");
         }
+        finally
+        {
+            refreshInProgress = false;
+        }
     }
+
+    private void SetAutoRefresh(bool enabled)
+    {
+        timer.Enabled = enabled;
+        refreshInterval.Enabled = enabled;
+
+        using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
+        key.SetValue(AutoRefreshValue, enabled ? 1 : 0, RegistryValueKind.DWord);
+
+        if (enabled) _ = RefreshAsync();
+    }
+
+    private void SetRefreshInterval(int minutes)
+    {
+        if (minutes is not (1 or 5 or 15)) return;
+
+        timer.Interval = minutes * 60 * 1000;
+        foreach (var item in refreshInterval.DropDownItems.OfType<ToolStripMenuItem>())
+            item.Checked = item.Tag is int value && value == minutes;
+
+        using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
+        key.SetValue(RefreshIntervalValue, minutes, RegistryValueKind.DWord);
+    }
+
+    private string IntervalTitle(int minutes) => minutes switch {
+        1 => T("1 minute", "1 минута"),
+        5 => T("5 minutes", "5 минут"),
+        15 => T("15 minutes", "15 минут"),
+        _ => minutes.ToString(CultureInfo.InvariantCulture)
+    };
 
     private string FormatWindow(string title, UsageWindow? window)
     {
@@ -124,6 +202,19 @@ internal sealed class TrayApplication : ApplicationContext
 
     private string T(string english, string russianText) => russian ? russianText : english;
 
+    private static bool ReadAutoRefreshEnabled()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(SettingsKey);
+        return key?.GetValue(AutoRefreshValue) is int enabled ? enabled != 0 : true;
+    }
+
+    private static int ReadRefreshInterval()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(SettingsKey);
+        var minutes = key?.GetValue(RefreshIntervalValue) is int savedMinutes ? savedMinutes : 5;
+        return minutes is 1 or 5 or 15 ? minutes : 5;
+    }
+
     private static bool IsLaunchAtLoginEnabled()
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKey);
@@ -156,7 +247,7 @@ internal static class CodexClient
         try { process.Start(); }
         catch (Exception error) { throw new InvalidOperationException("Codex: " + error.Message); }
 
-        await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex-usage-bar\",\"title\":\"Codex Usage Bar\",\"version\":\"0.2.5\"}}}");
+        await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex-usage-bar\",\"title\":\"Codex Usage Bar\",\"version\":\"0.2.6\"}}}");
         await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
         await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}");
 
