@@ -25,11 +25,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-private final class StatusItemController: NSObject {
+private final class StatusItemController: NSObject, NSPopoverDelegate {
     private let viewModel: UsageViewModel
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     private var stateObserver: AnyCancellable?
+    private var outsideClickMonitor: Any?
 
     init(viewModel: UsageViewModel) {
         self.viewModel = viewModel
@@ -40,6 +41,7 @@ private final class StatusItemController: NSObject {
         popover.contentViewController = hostingController
         popover.behavior = .transient
         popover.animates = true
+        popover.delegate = self
 
         if let button = statusItem.button {
             button.target = self
@@ -57,6 +59,9 @@ private final class StatusItemController: NSObject {
     }
 
     deinit {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+        }
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
@@ -66,6 +71,29 @@ private final class StatusItemController: NSObject {
             popover.performClose(nil)
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            startOutsideClickMonitor()
+        }
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        stopOutsideClickMonitor()
+    }
+
+    private func startOutsideClickMonitor() {
+        stopOutsideClickMonitor()
+        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.popover.performClose(nil)
+            }
+        }
+    }
+
+    private func stopOutsideClickMonitor() {
+        if let outsideClickMonitor {
+            NSEvent.removeMonitor(outsideClickMonitor)
+            self.outsideClickMonitor = nil
         }
     }
 

@@ -305,9 +305,12 @@ internal sealed class TrayApplication : ApplicationContext
             var title = level == 2
                 ? T($"{limitName} is critical", $"{limitName} почти исчерпан")
                 : T($"{limitName} is running low", $"{limitName} заканчивается");
+            var resetText = window.ResetAt is { } resetAt
+                ? resetAt.ToLocalTime().ToString("dd.MM HH:mm")
+                : T("unknown", "неизвестно");
             var message = T(
-                $"{window.Remaining}% remains until reset.",
-                $"До сброса осталось {window.Remaining}%."
+                $"Remaining: {window.Remaining}%. Reset: {resetText}.",
+                $"Осталось {window.Remaining}%. Сброс: {resetText}."
             );
             tray.ShowBalloonTip(5_000, title, message, level == 2 ? ToolTipIcon.Warning : ToolTipIcon.Info);
         }

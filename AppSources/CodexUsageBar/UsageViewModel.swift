@@ -1,6 +1,7 @@
 import AppKit
 import CodexUsageCore
 import Foundation
+import IOKit.pwr_mgt
 import UserNotifications
 
 enum NotificationAuthorizationState: Equatable {
@@ -28,13 +29,14 @@ final class UsageViewModel: ObservableObject {
     @Published private(set) var notificationAuthorizationState: NotificationAuthorizationState = .unknown
     @Published private(set) var menuBarBackgroundEnabled: Bool
     @Published private(set) var keepAwakeEnabled = false
+    @Published private(set) var keepAwakeIssue: String?
 
     private let service = CodexUsageService()
     private let notifications = LimitNotificationService()
     private let defaults: UserDefaults
     private var refreshTimer: Timer?
     private var clockTimer: Timer?
-    private var keepAwakeActivity: NSObjectProtocol?
+    private var keepAwakeAssertionID: IOPMAssertionID?
     private var lastPrimaryAlertLevel: LimitAlertLevel = .none
     private var lastSecondaryAlertLevel: LimitAlertLevel = .none
 
@@ -99,8 +101,8 @@ final class UsageViewModel: ObservableObject {
     deinit {
         refreshTimer?.invalidate()
         clockTimer?.invalidate()
-        if let keepAwakeActivity {
-            ProcessInfo.processInfo.endActivity(keepAwakeActivity)
+        if let keepAwakeAssertionID {
+            IOPMAssertionRelease(keepAwakeAssertionID)
         }
     }
 
@@ -354,17 +356,32 @@ final class UsageViewModel: ObservableObject {
 
     func setKeepAwakeEnabled(_ enabled: Bool) {
         guard keepAwakeEnabled != enabled else { return }
-        keepAwakeEnabled = enabled
+        if let keepAwakeAssertionID {
+            IOPMAssertionRelease(keepAwakeAssertionID)
+            self.keepAwakeAssertionID = nil
+        }
+        keepAwakeIssue = nil
 
-        if let keepAwakeActivity {
-            ProcessInfo.processInfo.endActivity(keepAwakeActivity)
-            self.keepAwakeActivity = nil
+        guard enabled else {
+            keepAwakeEnabled = false
+            return
         }
 
-        if enabled {
-            keepAwakeActivity = ProcessInfo.processInfo.beginActivity(
-                options: [.idleSystemSleepDisabled],
-                reason: "Codex Usage Bar is keeping active tasks running"
+        var assertionID: IOPMAssertionID = 0
+        let result = IOPMAssertionCreateWithName(
+            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            IOPMAssertionLevel(kIOPMAssertionLevelOn),
+            "Codex Usage Bar is keeping active tasks running" as CFString,
+            &assertionID
+        )
+        if result == kIOReturnSuccess {
+            keepAwakeAssertionID = assertionID
+            keepAwakeEnabled = true
+        } else {
+            keepAwakeEnabled = false
+            keepAwakeIssue = language.text(
+                "macOS did not allow the sleep-prevention mode.",
+                "macOS не разрешила режим предотвращения сна."
             )
         }
     }
@@ -524,10 +541,7 @@ private final class LimitNotificationService: NSObject, UNUserNotificationCenter
             level == .critical ? "\(limitName) is critical" : "\(limitName) is running low",
             level == .critical ? "\(limitName) почти исчерпан" : "\(limitName) заканчивается"
         )
-        content.body = language.text(
-            "\(window.remainingPercent)% remains until reset.",
-            "До сброса осталось \(window.remainingPercent)%."
-        )
+        content.body = notificationBody(for: window, language: language)
         content.sound = .default
         try? await center.add(
             UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
@@ -544,6 +558,24 @@ private final class LimitNotificationService: NSObject, UNUserNotificationCenter
         content.sound = .default
         try? await center.add(
             UNNotificationRequest(identifier: "limit-alert-test", content: content, trigger: nil)
+        )
+    }
+
+    private func notificationBody(for window: UsageWindow, language: AppLanguage) -> String {
+        guard let resetDate = window.resetsAt else {
+            return language.text(
+                "Remaining: \(window.remainingPercent)%. Reset time is unavailable.",
+                "Осталось \(window.remainingPercent)%. Время сброса неизвестно."
+            )
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: language == .english ? "en_US" : "ru_RU")
+        formatter.timeZone = .current
+        formatter.dateFormat = language == .english ? "MMM d, HH:mm" : "d MMM, HH:mm"
+        return language.text(
+            "Remaining: \(window.remainingPercent)%. Reset: \(formatter.string(from: resetDate)).",
+            "Осталось \(window.remainingPercent)%. Сброс: \(formatter.string(from: resetDate))."
         )
     }
 

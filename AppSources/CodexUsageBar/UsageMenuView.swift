@@ -136,19 +136,28 @@ struct UsageMenuView: View {
             .toggleStyle(.checkbox)
             .font(.callout.weight(.medium))
 
-            Text(
-                t(
-                    "Keeps tasks running while the lid is open. Closing the lid can still put a MacBook to sleep.",
-                    "Сохраняет работу задач при открытой крышке. Закрытие крышки всё равно может усыпить MacBook."
-                )
-            )
+            Text(keepAwakeDescription)
             .font(.caption2)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(viewModel.keepAwakeIssue == nil ? Color.secondary : Color.orange)
             .fixedSize(horizontal: false, vertical: true)
         }
         .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassPanel(cornerRadius: 12)
+    }
+
+    private var keepAwakeDescription: String {
+        if let issue = viewModel.keepAwakeIssue { return issue }
+        if viewModel.keepAwakeEnabled {
+            return t(
+                "Active: automatic system sleep is blocked until you turn this off or quit the app.",
+                "Активно: автоматический сон заблокирован до выключения функции или выхода из приложения."
+            )
+        }
+        return t(
+            "Keeps tasks running while the lid is open. Closing the lid can still put a MacBook to sleep.",
+            "Сохраняет работу задач при открытой крышке. Закрытие крышки всё равно может усыпить MacBook."
+        )
     }
 
     @ViewBuilder
