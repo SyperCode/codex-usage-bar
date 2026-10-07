@@ -200,14 +200,10 @@ struct UsageMenuView: View {
     }
 
     private var settings: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
-                appearanceSettings
-                behaviorSettings
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            appearanceSettings
+            behaviorSettings
         }
-        .scrollIndicators(.hidden)
-        .frame(maxHeight: 590)
     }
 
     private var appearanceSettings: some View {
@@ -406,8 +402,8 @@ struct UsageMenuView: View {
 
                     Text(
                         t(
-                            "Critical alerts and the two-battery view start at 10%.",
-                            "Критическое предупреждение и две батарейки включаются при 10%."
+                            "Critical two-battery mode starts at 10%.",
+                            "Критический режим с двумя батарейками — при 10%."
                         )
                     )
                     .font(.caption2)
