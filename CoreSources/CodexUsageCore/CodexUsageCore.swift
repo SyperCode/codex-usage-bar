@@ -13,21 +13,94 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 }
 
-public enum WeeklyAlertLevel: Int, Sendable {
+public enum LimitAlertLevel: Int, Sendable {
     case none
     case warning
     case critical
 }
 
-public enum WeeklyAlertPolicy {
+public enum LimitAlertPolicy {
     public static let criticalThreshold = 10
     public static let defaultWarningThreshold = 20
     public static let warningThresholdRange = 10...90
 
-    public static func level(remainingPercent: Int, warningThreshold: Int) -> WeeklyAlertLevel {
+    public static func level(remainingPercent: Int, warningThreshold: Int) -> LimitAlertLevel {
         if remainingPercent <= criticalThreshold { return .critical }
         let threshold = min(warningThresholdRange.upperBound, max(criticalThreshold, warningThreshold))
         return remainingPercent <= threshold ? .warning : .none
+    }
+}
+
+public enum UsagePeriodKind: Equatable, Sendable {
+    case fiveHour
+    case hourly(Int)
+    case daily
+    case weekly
+    case monthly
+    case days(Int)
+    case unknown
+
+    public init(durationMinutes: Int?) {
+        guard let minutes = durationMinutes, minutes > 0 else {
+            self = .unknown
+            return
+        }
+        switch minutes {
+        case 300:
+            self = .fiveHour
+        case 1_440:
+            self = .daily
+        case 10_080:
+            self = .weekly
+        case 40_320...46_080:
+            self = .monthly
+        default:
+            if minutes % 1_440 == 0 {
+                self = .days(minutes / 1_440)
+            } else if minutes % 60 == 0 {
+                self = .hourly(minutes / 60)
+            } else {
+                self = .unknown
+            }
+        }
+    }
+
+    public func title(language: UsageDisplayLanguage) -> String {
+        switch self {
+        case .fiveHour:
+            return language == .english ? "5-hour limit" : "5-часовой лимит"
+        case .hourly(let hours):
+            return language == .english ? "\(hours)-hour limit" : "Лимит на \(hours) ч"
+        case .daily:
+            return language == .english ? "Daily limit" : "Дневной лимит"
+        case .weekly:
+            return language == .english ? "Weekly limit" : "Недельный лимит"
+        case .monthly:
+            return language == .english ? "Monthly limit" : "Месячный лимит"
+        case .days(let days):
+            return language == .english ? "\(days)-day limit" : "Лимит на \(days) дн."
+        case .unknown:
+            return language == .english ? "Usage limit" : "Лимит использования"
+        }
+    }
+
+    public func shortLabel(language: UsageDisplayLanguage) -> String {
+        switch self {
+        case .fiveHour:
+            return language == .english ? "5h" : "5ч"
+        case .hourly(let hours):
+            return language == .english ? "\(hours)h" : "\(hours)ч"
+        case .daily:
+            return language == .english ? "day" : "день"
+        case .weekly:
+            return language == .english ? "wk" : "нед"
+        case .monthly:
+            return language == .english ? "mo" : "мес"
+        case .days(let days):
+            return language == .english ? "\(days)d" : "\(days)д"
+        case .unknown:
+            return language == .english ? "limit" : "лимит"
+        }
     }
 }
 
@@ -43,6 +116,10 @@ public struct UsageWindow: Equatable, Sendable {
     }
 
     public var remainingPercent: Int { min(100, max(0, 100 - usedPercent)) }
+
+    public var periodKind: UsagePeriodKind {
+        UsagePeriodKind(durationMinutes: windowDurationMinutes)
+    }
 
     public var compactDuration: String {
         guard let minutes = windowDurationMinutes else { return "—" }
@@ -226,7 +303,7 @@ private final class AppServerSession: @unchecked Sendable {
         do {
             try process.run()
             let messages = [
-                #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-usage-bar","title":"Codex Usage Bar","version":"0.2.8"}}}"#,
+                #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-usage-bar","title":"Codex Usage Bar","version":"0.2.9"}}}"#,
                 #"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
                 #"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read","params":{}}"#
             ].joined(separator: "\n") + "\n"
@@ -324,19 +401,25 @@ public struct MenuBarTitleFormatter: Sendable {
     }
 
     public func string(from snapshot: UsageSnapshot, mode: MenuBarDisplayMode) -> String {
+        let leadingWindow = snapshot.primary ?? snapshot.secondary
         if mode == .battery {
-            return snapshot.primary.map { "\($0.remainingPercent)%" } ?? "—"
+            return leadingWindow.map { "\($0.remainingPercent)%" } ?? "—"
         }
 
         if mode == .expanded {
-            let primary = snapshot.primary.map { "\(language == .english ? "5h" : "5ч") \($0.remainingPercent)%" }
-            let secondary = snapshot.secondary.map { "\(language == .english ? "wk" : "нед") \($0.remainingPercent)%" }
+            let primary = snapshot.primary.map { "\($0.periodKind.shortLabel(language: language)) \($0.remainingPercent)%" }
+            let secondary = snapshot.secondary.map { "\($0.periodKind.shortLabel(language: language)) \($0.remainingPercent)%" }
             let parts = [primary, secondary].compactMap { $0 }
             return parts.isEmpty ? "—" : parts.joined(separator: " · ")
         }
 
         var parts: [String] = []
-        if let primary = snapshot.primary { parts.append(part(primary, shortLabel: language == .english ? "5h" : "5ч")) }
+        if let leadingWindow {
+            parts.append(part(
+                leadingWindow,
+                shortLabel: leadingWindow.periodKind.shortLabel(language: language)
+            ))
+        }
         return parts.isEmpty ? "—" : parts.joined(separator: " · ")
     }
 

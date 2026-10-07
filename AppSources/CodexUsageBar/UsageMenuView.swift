@@ -119,14 +119,43 @@ struct UsageMenuView: View {
             if let error = viewModel.errorMessage {
                 errorBanner(error)
             }
+
+            keepAwakeControl
         }
+    }
+
+    private var keepAwakeControl: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle(
+                t("Keep Mac awake", "Не давать Mac уснуть"),
+                isOn: Binding(
+                    get: { viewModel.keepAwakeEnabled },
+                    set: { viewModel.setKeepAwakeEnabled($0) }
+                )
+            )
+            .toggleStyle(.checkbox)
+            .font(.callout.weight(.medium))
+
+            Text(
+                t(
+                    "Keeps tasks running while the lid is open. Closing the lid can still put a MacBook to sleep.",
+                    "Сохраняет работу задач при открытой крышке. Закрытие крышки всё равно может усыпить MacBook."
+                )
+            )
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(11)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassPanel(cornerRadius: 12)
     }
 
     @ViewBuilder
     private func usageContent(_ snapshot: UsageSnapshot) -> some View {
         if let primary = snapshot.primary {
             UsageCard(
-                title: primaryTitle(primary),
+                title: viewModel.title(for: primary),
                 window: primary,
                 symbol: "clock",
                 language: viewModel.language,
@@ -136,7 +165,7 @@ struct UsageMenuView: View {
 
         if let secondary = snapshot.secondary {
             UsageCard(
-                title: secondaryTitle(secondary),
+                title: viewModel.title(for: secondary),
                 window: secondary,
                 symbol: "calendar",
                 language: viewModel.language,
@@ -327,7 +356,12 @@ struct UsageMenuView: View {
                     )
                 ) {
                     Text(t("Percent", "Процент")).tag(MenuBarDisplayMode.battery)
-                    Text(t("5 hours", "5 часов")).tag(MenuBarDisplayMode.compact)
+                    Text(
+                        (viewModel.snapshot?.primary ?? viewModel.snapshot?.secondary)
+                            .map { viewModel.title(for: $0) }
+                            ?? t("Primary limit", "Основной лимит")
+                    )
+                    .tag(MenuBarDisplayMode.compact)
                     Text(t("All limits", "Все лимиты")).tag(MenuBarDisplayMode.expanded)
                 }
                 .labelsHidden()
@@ -380,34 +414,23 @@ struct UsageMenuView: View {
 
             if viewModel.limitAlertsEnabled {
                 VStack(alignment: .leading, spacing: 7) {
-                    HStack {
-                        Label(t("Warning threshold", "Порог предупреждения"), systemImage: "bell.badge")
-                        Spacer()
-                        Text("\(viewModel.weeklyWarningThreshold)%")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.caption)
-
-                    Slider(
-                        value: Binding(
-                            get: { Double(viewModel.weeklyWarningThreshold) },
-                            set: { viewModel.setWeeklyWarningThreshold(Int($0)) }
-                        ),
-                        in: Double(WeeklyAlertPolicy.warningThresholdRange.lowerBound)...Double(WeeklyAlertPolicy.warningThresholdRange.upperBound),
-                        step: 5
-                    )
-                    .accessibilityLabel(t("Weekly warning threshold", "Порог предупреждения недельного лимита"))
-                    .accessibilityValue("\(viewModel.weeklyWarningThreshold)%")
-
-                    Text(
-                        t(
-                            "Critical two-battery mode starts at 10%.",
-                            "Критический режим с двумя батарейками — при 10%."
+                    if let primary = viewModel.snapshot?.primary {
+                        warningThresholdControl(
+                            window: primary,
+                            threshold: viewModel.primaryWarningThreshold,
+                            setThreshold: viewModel.setPrimaryWarningThreshold
                         )
-                    )
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    }
+
+                    if let secondary = viewModel.snapshot?.secondary {
+                        warningThresholdControl(
+                            window: secondary,
+                            threshold: viewModel.secondaryWarningThreshold,
+                            setThreshold: viewModel.setSecondaryWarningThreshold
+                        )
+                    }
+
+                    notificationControls
                 }
             }
 
@@ -498,16 +521,66 @@ struct UsageMenuView: View {
         )
     }
 
-    private func primaryTitle(_ window: UsageWindow) -> String {
-        window.windowDurationMinutes == 300
-            ? t("5-hour limit", "5-часовой лимит")
-            : t("Short-term limit", "Краткосрочный лимит")
+    private func warningThresholdControl(
+        window: UsageWindow,
+        threshold: Int,
+        setThreshold: @escaping (Int) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Label(viewModel.title(for: window), systemImage: "bell.badge")
+                Spacer()
+                Text("\(threshold)%")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .font(.caption)
+
+            Slider(
+                value: Binding(
+                    get: { Double(threshold) },
+                    set: { setThreshold(Int($0)) }
+                ),
+                in: Double(LimitAlertPolicy.warningThresholdRange.lowerBound)...Double(LimitAlertPolicy.warningThresholdRange.upperBound),
+                step: 5
+            )
+            .accessibilityLabel(
+                t(
+                    "Warning threshold for \(viewModel.title(for: window))",
+                    "Порог предупреждения: \(viewModel.title(for: window))"
+                )
+            )
+            .accessibilityValue("\(threshold)%")
+        }
     }
 
-    private func secondaryTitle(_ window: UsageWindow) -> String {
-        window.windowDurationMinutes == 10_080
-            ? t("Weekly limit", "Недельный лимит")
-            : t("Long-term limit", "Долгосрочный лимит")
+    @ViewBuilder
+    private var notificationControls: some View {
+        HStack(spacing: 10) {
+            Button(t("Test notification", "Проверить уведомление")) {
+                viewModel.sendTestNotification()
+            }
+            .buttonStyle(.link)
+
+            if viewModel.notificationAuthorizationState == .denied {
+                Button(t("Open Settings", "Открыть настройки")) {
+                    viewModel.openNotificationSettings()
+                }
+                .buttonStyle(.link)
+            }
+        }
+        .font(.caption)
+
+        if viewModel.notificationAuthorizationState == .denied {
+            Text(
+                t(
+                    "Notifications are disabled for Codex Usage Bar in macOS.",
+                    "Уведомления Codex Usage Bar отключены в macOS."
+                )
+            )
+            .font(.caption2)
+            .foregroundStyle(.orange)
+        }
     }
 
     private func planDisplayName(_ plan: String) -> String {

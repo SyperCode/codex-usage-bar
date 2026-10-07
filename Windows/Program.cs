@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Microsoft.Win32;
 
@@ -23,7 +24,9 @@ internal sealed class TrayApplication : ApplicationContext
     private const string AutoRefreshValue = "AutoRefreshEnabled";
     private const string RefreshIntervalValue = "RefreshIntervalMinutes";
     private const string LimitAlertsValue = "LimitAlertsEnabled";
-    private const string WarningThresholdValue = "WeeklyWarningThreshold";
+    private const string PrimaryWarningThresholdValue = "PrimaryWarningThreshold";
+    private const string SecondaryWarningThresholdValue = "SecondaryWarningThreshold";
+    private const string LegacyWarningThresholdValue = "WeeklyWarningThreshold";
     private const int CriticalThreshold = 10;
     private readonly bool russian = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "ru";
     private readonly NotifyIcon tray;
@@ -33,11 +36,15 @@ internal sealed class TrayApplication : ApplicationContext
     private readonly ToolStripMenuItem autoRefresh;
     private readonly ToolStripMenuItem refreshInterval;
     private readonly ToolStripMenuItem limitAlerts;
-    private readonly ToolStripMenuItem warningThreshold;
+    private readonly ToolStripMenuItem warningThresholds;
+    private readonly ToolStripMenuItem primaryWarningThreshold;
+    private readonly ToolStripMenuItem secondaryWarningThreshold;
+    private readonly ToolStripMenuItem keepAwake;
     private readonly ToolStripMenuItem launchAtLogin;
     private readonly System.Windows.Forms.Timer timer;
     private bool refreshInProgress;
-    private int lastAlertLevel;
+    private int lastPrimaryAlertLevel;
+    private int lastSecondaryAlertLevel;
     private UsageSnapshot? latestUsage;
 
     public TrayApplication()
@@ -70,25 +77,31 @@ internal sealed class TrayApplication : ApplicationContext
         }
         refreshInterval.Enabled = autoRefresh.Checked;
 
-        var savedWarningThreshold = ReadWarningThreshold();
         limitAlerts = new ToolStripMenuItem(T("Limit alerts", "Предупреждения о лимитах")) {
             CheckOnClick = true,
             Checked = ReadLimitAlertsEnabled()
         };
         limitAlerts.CheckedChanged += (_, _) => SetLimitAlerts(limitAlerts.Checked);
 
-        warningThreshold = new ToolStripMenuItem(T("Warning threshold", "Порог предупреждения"));
-        for (var percentage = 10; percentage <= 90; percentage += 5)
-        {
-            var thresholdItem = new ToolStripMenuItem($"{percentage}%") {
-                Checked = percentage == savedWarningThreshold,
-                Tag = percentage
-            };
-            thresholdItem.Click += (sender, _) =>
-                SetWarningThreshold((int)((ToolStripMenuItem)sender!).Tag!);
-            warningThreshold.DropDownItems.Add(thresholdItem);
-        }
-        warningThreshold.Enabled = limitAlerts.Checked;
+        warningThresholds = new ToolStripMenuItem(T("Warning thresholds", "Пороги предупреждений"));
+        primaryWarningThreshold = CreateThresholdMenu(
+            T("Primary limit", "Основной лимит"),
+            ReadWarningThreshold(PrimaryWarningThresholdValue),
+            SetPrimaryWarningThreshold
+        );
+        secondaryWarningThreshold = CreateThresholdMenu(
+            T("Secondary limit", "Дополнительный лимит"),
+            ReadWarningThreshold(SecondaryWarningThresholdValue, LegacyWarningThresholdValue),
+            SetSecondaryWarningThreshold
+        );
+        warningThresholds.DropDownItems.AddRange([primaryWarningThreshold, secondaryWarningThreshold]);
+        warningThresholds.Enabled = limitAlerts.Checked;
+
+        keepAwake = new ToolStripMenuItem(T("Keep computer awake", "Не давать компьютеру уснуть")) {
+            CheckOnClick = true,
+            Checked = false
+        };
+        keepAwake.CheckedChanged += (_, _) => SetKeepAwake(keepAwake.Checked);
 
         launchAtLogin = new ToolStripMenuItem(T("Launch with Windows", "Запускать вместе с Windows")) {
             CheckOnClick = true,
@@ -114,7 +127,8 @@ internal sealed class TrayApplication : ApplicationContext
             refreshInterval,
             new ToolStripSeparator(),
             limitAlerts,
-            warningThreshold,
+            warningThresholds,
+            keepAwake,
             openUsage,
             launchAtLogin,
             new ToolStripSeparator(),
@@ -133,6 +147,7 @@ internal sealed class TrayApplication : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        SetKeepAwake(false);
         timer.Dispose();
         tray.Visible = false;
         tray.Dispose();
@@ -143,20 +158,27 @@ internal sealed class TrayApplication : ApplicationContext
     {
         if (refreshInProgress) return;
         refreshInProgress = true;
-        fiveHour.Text = T("5-hour limit: updating…", "5-часовой лимит: обновление…");
+        fiveHour.Text = T("Usage limit: updating…", "Лимит: обновление…");
         try
         {
             var usage = await CodexClient.ReadUsageAsync();
-            fiveHour.Text = FormatWindow(T("5-hour limit", "5-часовой лимит"), usage.Primary);
-            weekly.Text = FormatWindow(T("Weekly limit", "Недельный лимит"), usage.Secondary);
+            fiveHour.Visible = usage.Primary is not null;
+            weekly.Visible = usage.Secondary is not null;
+            primaryWarningThreshold.Visible = usage.Primary is not null;
+            secondaryWarningThreshold.Visible = usage.Secondary is not null;
+            fiveHour.Text = FormatWindow(WindowTitle(usage.Primary), usage.Primary);
+            weekly.Text = FormatWindow(WindowTitle(usage.Secondary), usage.Secondary);
+            primaryWarningThreshold.Text = WindowTitle(usage.Primary);
+            secondaryWarningThreshold.Text = WindowTitle(usage.Secondary);
             updated.Text = T("Updated", "Обновлено") + $": {DateTime.Now:HH:mm}";
             latestUsage = usage;
             tray.Text = Tooltip(usage);
-            EvaluateWeeklyAlert(usage);
+            EvaluateAlerts(usage);
         }
         catch (Exception error)
         {
             fiveHour.Text = T("Usage unavailable", "Лимиты недоступны");
+            weekly.Visible = true;
             weekly.Text = error.Message.Length > 70 ? error.Message[..70] + "…" : error.Message;
             updated.Text = T("Open Codex or ChatGPT and sign in", "Откройте Codex или ChatGPT и войдите в аккаунт");
             tray.Text = "Codex Usage Bar — " + T("error", "ошибка");
@@ -192,8 +214,9 @@ internal sealed class TrayApplication : ApplicationContext
 
     private void SetLimitAlerts(bool enabled)
     {
-        warningThreshold.Enabled = enabled;
-        lastAlertLevel = 0;
+        warningThresholds.Enabled = enabled;
+        lastPrimaryAlertLevel = 0;
+        lastSecondaryAlertLevel = 0;
 
         using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
         key.SetValue(LimitAlertsValue, enabled ? 1 : 0, RegistryValueKind.DWord);
@@ -201,47 +224,94 @@ internal sealed class TrayApplication : ApplicationContext
         if (latestUsage is { } usage)
         {
             tray.Text = Tooltip(usage);
-            if (enabled) EvaluateWeeklyAlert(usage);
+            if (enabled) EvaluateAlerts(usage);
         }
     }
 
-    private void SetWarningThreshold(int percentage)
+    private ToolStripMenuItem CreateThresholdMenu(string title, int selected, Action<int> setter)
+    {
+        var menu = new ToolStripMenuItem(title);
+        for (var percentage = 10; percentage <= 90; percentage += 5)
+        {
+            var thresholdItem = new ToolStripMenuItem($"{percentage}%") {
+                Checked = percentage == selected,
+                Tag = percentage
+            };
+            thresholdItem.Click += (sender, _) => setter((int)((ToolStripMenuItem)sender!).Tag!);
+            menu.DropDownItems.Add(thresholdItem);
+        }
+        return menu;
+    }
+
+    private void SetPrimaryWarningThreshold(int percentage)
+    {
+        SetWarningThreshold(primaryWarningThreshold, PrimaryWarningThresholdValue, percentage);
+        lastPrimaryAlertLevel = 0;
+        if (latestUsage is { } usage) EvaluateAlerts(usage);
+    }
+
+    private void SetSecondaryWarningThreshold(int percentage)
+    {
+        SetWarningThreshold(secondaryWarningThreshold, SecondaryWarningThresholdValue, percentage);
+        lastSecondaryAlertLevel = 0;
+        if (latestUsage is { } usage) EvaluateAlerts(usage);
+    }
+
+    private static void SetWarningThreshold(ToolStripMenuItem menu, string registryName, int percentage)
     {
         var value = Math.Clamp(percentage, CriticalThreshold, 90);
-        foreach (var item in warningThreshold.DropDownItems.OfType<ToolStripMenuItem>())
+        foreach (var item in menu.DropDownItems.OfType<ToolStripMenuItem>())
             item.Checked = item.Tag is int threshold && threshold == value;
 
         using var key = Registry.CurrentUser.CreateSubKey(SettingsKey);
-        key.SetValue(WarningThresholdValue, value, RegistryValueKind.DWord);
-
-        lastAlertLevel = 0;
-        if (latestUsage is { } usage) EvaluateWeeklyAlert(usage);
+        key.SetValue(registryName, value, RegistryValueKind.DWord);
     }
 
-    private void EvaluateWeeklyAlert(UsageSnapshot usage)
+    private void EvaluateAlerts(UsageSnapshot usage)
     {
-        if (!limitAlerts.Checked || usage.Secondary is not { } weeklyLimit)
+        if (!limitAlerts.Checked)
         {
-            lastAlertLevel = 0;
+            lastPrimaryAlertLevel = 0;
+            lastSecondaryAlertLevel = 0;
             return;
         }
 
-        var threshold = ReadWarningThreshold();
-        var level = weeklyLimit.Remaining <= CriticalThreshold
-            ? 2
-            : weeklyLimit.Remaining <= threshold ? 1 : 0;
-        if (level > lastAlertLevel)
+        EvaluateAlert(
+            usage.Primary,
+            ReadWarningThreshold(PrimaryWarningThresholdValue),
+            ref lastPrimaryAlertLevel
+        );
+        EvaluateAlert(
+            usage.Secondary,
+            ReadWarningThreshold(SecondaryWarningThresholdValue, LegacyWarningThresholdValue),
+            ref lastSecondaryAlertLevel
+        );
+    }
+
+    private void EvaluateAlert(UsageWindow? window, int threshold, ref int lastLevel)
+    {
+        if (window is null)
         {
+            lastLevel = 0;
+            return;
+        }
+
+        var level = window.Remaining <= CriticalThreshold
+            ? 2
+            : window.Remaining <= threshold ? 1 : 0;
+        if (level > lastLevel)
+        {
+            var limitName = WindowTitle(window);
             var title = level == 2
-                ? T("Weekly limit is critical", "Недельный лимит почти исчерпан")
-                : T("Weekly limit is running low", "Недельный лимит заканчивается");
+                ? T($"{limitName} is critical", $"{limitName} почти исчерпан")
+                : T($"{limitName} is running low", $"{limitName} заканчивается");
             var message = T(
-                $"{weeklyLimit.Remaining}% remains until the weekly reset.",
-                $"До недельного сброса осталось {weeklyLimit.Remaining}%."
+                $"{window.Remaining}% remains until reset.",
+                $"До сброса осталось {window.Remaining}%."
             );
             tray.ShowBalloonTip(5_000, title, message, level == 2 ? ToolTipIcon.Warning : ToolTipIcon.Info);
         }
-        lastAlertLevel = level;
+        lastLevel = level;
     }
 
     private string IntervalTitle(int minutes) => minutes switch {
@@ -260,21 +330,61 @@ internal sealed class TrayApplication : ApplicationContext
         return $"{title}: {window.Remaining}%{reset}";
     }
 
+    private string WindowTitle(UsageWindow? window)
+    {
+        if (window is null) return T("Usage limit", "Лимит использования");
+        return window.DurationMinutes switch {
+            300 => T("5-hour limit", "5-часовой лимит"),
+            1440 => T("Daily limit", "Дневной лимит"),
+            10080 => T("Weekly limit", "Недельный лимит"),
+            >= 40320 and <= 46080 => T("Monthly limit", "Месячный лимит"),
+            int minutes when minutes % 1440 == 0 => T($"{minutes / 1440}-day limit", $"Лимит на {minutes / 1440} дн."),
+            int minutes when minutes % 60 == 0 => T($"{minutes / 60}-hour limit", $"Лимит на {minutes / 60} ч"),
+            _ => T("Usage limit", "Лимит использования")
+        };
+    }
+
+    private string ShortLabel(UsageWindow window)
+    {
+        return window.DurationMinutes switch {
+            300 => T("5h", "5ч"),
+            1440 => T("day", "день"),
+            10080 => T("wk", "нед"),
+            >= 40320 and <= 46080 => T("mo", "мес"),
+            int minutes when minutes % 1440 == 0 => T($"{minutes / 1440}d", $"{minutes / 1440}д"),
+            int minutes when minutes % 60 == 0 => T($"{minutes / 60}h", $"{minutes / 60}ч"),
+            _ => T("limit", "лимит")
+        };
+    }
+
     private string Tooltip(UsageSnapshot usage)
     {
-        if (limitAlerts.Checked && usage.Secondary is { Remaining: <= CriticalThreshold } weeklyLimit)
+        if (limitAlerts.Checked &&
+            usage.Primary is { } primaryLimit &&
+            usage.Secondary is { Remaining: <= CriticalThreshold } secondaryLimit)
         {
-            var primary = usage.Primary is { } primaryLimit ? $"{primaryLimit.Remaining}%" : "—";
-            return $"Codex Usage Bar · 5h {primary} · wk {weeklyLimit.Remaining}%";
+            var criticalText = $"{ShortLabel(primaryLimit)} {primaryLimit.Remaining}% · "
+                + $"{ShortLabel(secondaryLimit)} {secondaryLimit.Remaining}%";
+            return TruncateTooltip("Codex Usage Bar · " + criticalText);
         }
 
-        var value = usage.Primary switch {
+        var leadingWindow = usage.Primary ?? usage.Secondary;
+        var value = leadingWindow switch {
             { Remaining: 0, ResetAt: { } resetAt } => "↻ " + Countdown(resetAt),
             { } primaryLimit => $"{primaryLimit.Remaining}%",
             _ => "—"
         };
-        var text = $"Codex Usage Bar · 5h {value}";
-        return text.Length <= 63 ? text : text[..63];
+        var label = leadingWindow is { } primary ? ShortLabel(primary) : T("limit", "лимит");
+        return TruncateTooltip($"Codex Usage Bar · {label} {value}");
+    }
+
+    private static string TruncateTooltip(string text) => text.Length <= 63 ? text : text[..63];
+
+    private static void SetKeepAwake(bool enabled)
+    {
+        SetThreadExecutionState(enabled
+            ? ExecutionState.Continuous | ExecutionState.SystemRequired
+            : ExecutionState.Continuous);
     }
 
     private string Countdown(DateTimeOffset resetAt)
@@ -313,10 +423,13 @@ internal sealed class TrayApplication : ApplicationContext
         return key?.GetValue(LimitAlertsValue) is int enabled ? enabled != 0 : true;
     }
 
-    private static int ReadWarningThreshold()
+    private static int ReadWarningThreshold(string valueName, string? fallbackValueName = null)
     {
         using var key = Registry.CurrentUser.OpenSubKey(SettingsKey);
-        var threshold = key?.GetValue(WarningThresholdValue) is int savedThreshold ? savedThreshold : 20;
+        var stored = key?.GetValue(valueName);
+        if (stored is not int && fallbackValueName is not null)
+            stored = key?.GetValue(fallbackValueName);
+        var threshold = stored is int savedThreshold ? savedThreshold : 20;
         return Math.Clamp(threshold, CriticalThreshold, 90);
     }
 
@@ -332,6 +445,16 @@ internal sealed class TrayApplication : ApplicationContext
         if (enabled) key.SetValue(RunValue, $"\"{Environment.ProcessPath}\"");
         else key.DeleteValue(RunValue, false);
     }
+
+    [Flags]
+    private enum ExecutionState : uint
+    {
+        SystemRequired = 0x00000001,
+        Continuous = 0x80000000
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern ExecutionState SetThreadExecutionState(ExecutionState executionState);
 }
 
 internal static class CodexClient
@@ -352,7 +475,7 @@ internal static class CodexClient
         try { process.Start(); }
         catch (Exception error) { throw new InvalidOperationException("Codex: " + error.Message); }
 
-        await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex-usage-bar\",\"title\":\"Codex Usage Bar\",\"version\":\"0.2.7\"}}}");
+        await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"clientInfo\":{\"name\":\"codex-usage-bar\",\"title\":\"Codex Usage Bar\",\"version\":\"0.2.9\"}}}");
         await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
         await process.StandardInput.WriteLineAsync("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"account/rateLimits/read\",\"params\":{}}");
 
@@ -395,9 +518,12 @@ internal static class CodexClient
         if (!limits.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Object) return null;
         var used = value.GetProperty("usedPercent").GetDouble();
         DateTimeOffset? reset = null;
+        int? durationMinutes = null;
+        if (value.TryGetProperty("windowDurationMins", out var duration) && duration.ValueKind == JsonValueKind.Number)
+            durationMinutes = duration.GetInt32();
         if (value.TryGetProperty("resetsAt", out var timestamp) && timestamp.ValueKind == JsonValueKind.Number)
             reset = DateTimeOffset.FromUnixTimeSeconds((long)timestamp.GetDouble());
-        return new UsageWindow(Math.Clamp((int)Math.Round(100 - used), 0, 100), reset);
+        return new UsageWindow(Math.Clamp((int)Math.Round(100 - used), 0, 100), durationMinutes, reset);
     }
 
     private static string FindCodex()
@@ -410,5 +536,5 @@ internal static class CodexClient
     }
 }
 
-internal sealed record UsageWindow(int Remaining, DateTimeOffset? ResetAt);
+internal sealed record UsageWindow(int Remaining, int? DurationMinutes, DateTimeOffset? ResetAt);
 internal sealed record UsageSnapshot(UsageWindow? Primary, UsageWindow? Secondary);

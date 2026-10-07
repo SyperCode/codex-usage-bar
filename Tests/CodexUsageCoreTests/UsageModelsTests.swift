@@ -54,12 +54,26 @@ final class UsageModelsTests: XCTestCase {
         )
     }
 
-    func testWeeklyAlertPolicyUsesWarningAndFixedCriticalThresholds() {
-        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 21, warningThreshold: 20), .none)
-        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 20, warningThreshold: 20), .warning)
-        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 11, warningThreshold: 90), .warning)
-        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 10, warningThreshold: 90), .critical)
-        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 6, warningThreshold: 10), .critical)
+    func testLimitAlertPolicyUsesWarningAndFixedCriticalThresholds() {
+        XCTAssertEqual(LimitAlertPolicy.level(remainingPercent: 21, warningThreshold: 20), .none)
+        XCTAssertEqual(LimitAlertPolicy.level(remainingPercent: 20, warningThreshold: 20), .warning)
+        XCTAssertEqual(LimitAlertPolicy.level(remainingPercent: 11, warningThreshold: 90), .warning)
+        XCTAssertEqual(LimitAlertPolicy.level(remainingPercent: 10, warningThreshold: 90), .critical)
+        XCTAssertEqual(LimitAlertPolicy.level(remainingPercent: 6, warningThreshold: 10), .critical)
+    }
+
+    func testUsagePeriodsAreDerivedFromServerDuration() {
+        XCTAssertEqual(UsagePeriodKind(durationMinutes: 300), .fiveHour)
+        XCTAssertEqual(UsagePeriodKind(durationMinutes: 10_080), .weekly)
+        XCTAssertEqual(UsagePeriodKind(durationMinutes: 43_200), .monthly)
+        XCTAssertEqual(
+            UsagePeriodKind(durationMinutes: 43_200).title(language: .russian),
+            "Месячный лимит"
+        )
+        XCTAssertEqual(
+            UsagePeriodKind(durationMinutes: 43_200).shortLabel(language: .english),
+            "mo"
+        )
     }
 
     func testMenuBarTitlesStayCompactAndShowBothLimits() {
@@ -120,5 +134,24 @@ final class UsageModelsTests: XCTestCase {
             russianFormatter.string(from: snapshot, mode: .battery),
             "67%"
         )
+    }
+
+    func testSingleMonthlyLimitDoesNotInventASecondLimit() {
+        let snapshot = UsageSnapshot(
+            primary: nil,
+            secondary: UsageWindow(
+                usedPercent: 25,
+                windowDurationMinutes: 43_200,
+                resetsAt: nil
+            ),
+            credits: nil,
+            planType: "pro",
+            ordinaryUsageAllowed: true,
+            availableResetCredits: 0
+        )
+        let formatter = MenuBarTitleFormatter(language: .english)
+
+        XCTAssertEqual(formatter.string(from: snapshot, mode: .compact), "mo 75%")
+        XCTAssertEqual(formatter.string(from: snapshot, mode: .expanded), "mo 75%")
     }
 }

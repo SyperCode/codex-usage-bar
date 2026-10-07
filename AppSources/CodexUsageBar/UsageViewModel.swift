@@ -3,6 +3,12 @@ import CodexUsageCore
 import Foundation
 import UserNotifications
 
+enum NotificationAuthorizationState: Equatable {
+    case unknown
+    case allowed
+    case denied
+}
+
 @MainActor
 final class UsageViewModel: ObservableObject {
     @Published private(set) var snapshot: UsageSnapshot?
@@ -17,15 +23,20 @@ final class UsageViewModel: ObservableObject {
     @Published private(set) var theme: AppTheme
     @Published private(set) var accentChoice: AccentChoice
     @Published private(set) var limitAlertsEnabled: Bool
-    @Published private(set) var weeklyWarningThreshold: Int
+    @Published private(set) var primaryWarningThreshold: Int
+    @Published private(set) var secondaryWarningThreshold: Int
+    @Published private(set) var notificationAuthorizationState: NotificationAuthorizationState = .unknown
     @Published private(set) var menuBarBackgroundEnabled: Bool
+    @Published private(set) var keepAwakeEnabled = false
 
     private let service = CodexUsageService()
     private let notifications = LimitNotificationService()
     private let defaults: UserDefaults
     private var refreshTimer: Timer?
     private var clockTimer: Timer?
-    private var lastAlertLevel: WeeklyAlertLevel = .none
+    private var keepAwakeActivity: NSObjectProtocol?
+    private var lastPrimaryAlertLevel: LimitAlertLevel = .none
+    private var lastSecondaryAlertLevel: LimitAlertLevel = .none
 
     private enum PreferenceKey {
         static let displayMode = "menuBarDisplayMode"
@@ -35,7 +46,9 @@ final class UsageViewModel: ObservableObject {
         static let theme = "appTheme"
         static let accentChoice = "accentChoice"
         static let limitAlertsEnabled = "limitAlertsEnabled"
-        static let weeklyWarningThreshold = "weeklyWarningThreshold"
+        static let primaryWarningThreshold = "primaryWarningThreshold"
+        static let secondaryWarningThreshold = "secondaryWarningThreshold"
+        static let legacyWeeklyWarningThreshold = "weeklyWarningThreshold"
         static let menuBarBackgroundEnabled = "menuBarBackgroundEnabled"
     }
 
@@ -65,14 +78,19 @@ final class UsageViewModel: ObservableObject {
         self.limitAlertsEnabled = defaults.object(forKey: PreferenceKey.limitAlertsEnabled) == nil
             ? true
             : defaults.bool(forKey: PreferenceKey.limitAlertsEnabled)
-        let savedWarningThreshold = defaults.integer(forKey: PreferenceKey.weeklyWarningThreshold)
-        self.weeklyWarningThreshold = WeeklyAlertPolicy.warningThresholdRange.contains(savedWarningThreshold)
-            ? savedWarningThreshold
-            : WeeklyAlertPolicy.defaultWarningThreshold
+        let savedPrimaryThreshold = defaults.integer(forKey: PreferenceKey.primaryWarningThreshold)
+        self.primaryWarningThreshold = LimitAlertPolicy.warningThresholdRange.contains(savedPrimaryThreshold)
+            ? savedPrimaryThreshold
+            : LimitAlertPolicy.defaultWarningThreshold
+        let savedSecondaryThreshold = defaults.object(forKey: PreferenceKey.secondaryWarningThreshold) == nil
+            ? defaults.integer(forKey: PreferenceKey.legacyWeeklyWarningThreshold)
+            : defaults.integer(forKey: PreferenceKey.secondaryWarningThreshold)
+        self.secondaryWarningThreshold = LimitAlertPolicy.warningThresholdRange.contains(savedSecondaryThreshold)
+            ? savedSecondaryThreshold
+            : LimitAlertPolicy.defaultWarningThreshold
         self.menuBarBackgroundEnabled = defaults.bool(forKey: PreferenceKey.menuBarBackgroundEnabled)
 
         applyAppAppearance()
-        if limitAlertsEnabled { notifications.requestAuthorization() }
         Task { await refresh() }
         configureAutoRefreshTimer()
         configureClockTimer()
@@ -81,17 +99,21 @@ final class UsageViewModel: ObservableObject {
     deinit {
         refreshTimer?.invalidate()
         clockTimer?.invalidate()
+        if let keepAwakeActivity {
+            ProcessInfo.processInfo.endActivity(keepAwakeActivity)
+        }
     }
 
     func menuBarTitle(at date: Date = Date()) -> String {
         guard let snapshot else {
             return isRefreshing ? "…" : "—"
         }
+        let leadingWindow = snapshot.primary ?? snapshot.secondary
 
         if displayMode == .battery,
-           let primary = snapshot.primary,
-           primary.remainingPercent == 0,
-           let resetDate = primary.resetsAt {
+           let leadingWindow,
+           leadingWindow.remainingPercent == 0,
+           let resetDate = leadingWindow.resetsAt {
             return LimitCountdownFormatter.compact(
                 until: resetDate,
                 now: date,
@@ -99,14 +121,22 @@ final class UsageViewModel: ObservableObject {
             )
         }
 
-        if snapshot.primary?.remainingPercent == 0 ||
+        if leadingWindow?.remainingPercent == 0 ||
             (displayMode == .expanded && snapshot.secondary?.remainingPercent == 0) {
             var parts: [String] = []
-            if let primary = snapshot.primary {
-                parts.append(menuBarPart(for: primary, label: language.text("5h", "5ч"), now: date))
-            }
-            if displayMode == .expanded, let secondary = snapshot.secondary {
-                parts.append(menuBarPart(for: secondary, label: language.text("wk", "нед"), now: date))
+            if displayMode == .expanded {
+                if let primary = snapshot.primary {
+                    parts.append(menuBarPart(for: primary, label: shortLabel(for: primary), now: date))
+                }
+                if let secondary = snapshot.secondary {
+                    parts.append(menuBarPart(for: secondary, label: shortLabel(for: secondary), now: date))
+                }
+            } else if let leadingWindow {
+                parts.append(menuBarPart(
+                    for: leadingWindow,
+                    label: shortLabel(for: leadingWindow),
+                    now: date
+                ))
             }
             return parts.isEmpty ? "—" : parts.joined(separator: " · ")
         }
@@ -115,12 +145,23 @@ final class UsageViewModel: ObservableObject {
             .string(from: snapshot, mode: displayMode)
     }
 
-    var showsCriticalWeeklyStatus: Bool {
-        guard limitAlertsEnabled, let remaining = snapshot?.secondary?.remainingPercent else { return false }
-        return WeeklyAlertPolicy.level(
+    var showsCriticalSecondaryStatus: Bool {
+        guard limitAlertsEnabled,
+              snapshot?.primary != nil,
+              let remaining = snapshot?.secondary?.remainingPercent
+        else { return false }
+        return LimitAlertPolicy.level(
             remainingPercent: remaining,
-            warningThreshold: weeklyWarningThreshold
+            warningThreshold: secondaryWarningThreshold
         ) == .critical
+    }
+
+    func title(for window: UsageWindow) -> String {
+        window.periodKind.title(language: language.usageDisplayLanguage)
+    }
+
+    func shortLabel(for window: UsageWindow) -> String {
+        window.periodKind.shortLabel(language: language.usageDisplayLanguage)
     }
 
     func batterySymbol(for percentage: Int) -> String {
@@ -138,18 +179,19 @@ final class UsageViewModel: ObservableObject {
             return lastError == nil ? "gauge.with.dots.needle.50percent" : "exclamationmark.triangle"
         }
 
-        if snapshot.primary?.remainingPercent == 0 ||
+        let leadingWindow = snapshot.primary ?? snapshot.secondary
+        if leadingWindow?.remainingPercent == 0 ||
             (displayMode == .expanded && snapshot.secondary?.remainingPercent == 0) {
             return "arrow.clockwise"
         }
 
-        if displayMode == .battery, let percentage = snapshot.primary?.remainingPercent {
+        if displayMode == .battery, let percentage = leadingWindow?.remainingPercent {
             return batterySymbol(for: percentage)
         }
 
         let visibleWindows = displayMode == .expanded
             ? [snapshot.primary, snapshot.secondary]
-            : [snapshot.primary]
+            : [leadingWindow]
         let minimum = visibleWindows
             .compactMap { $0?.remainingPercent }
             .min() ?? 100
@@ -215,7 +257,7 @@ final class UsageViewModel: ObservableObject {
             snapshot = updatedSnapshot
             lastUpdated = Date()
             lastError = nil
-            evaluateWeeklyAlert(updatedSnapshot)
+            await evaluateAlerts(updatedSnapshot)
         } catch {
             lastError = error
         }
@@ -264,30 +306,67 @@ final class UsageViewModel: ObservableObject {
     func setLimitAlertsEnabled(_ enabled: Bool) {
         limitAlertsEnabled = enabled
         defaults.set(enabled, forKey: PreferenceKey.limitAlertsEnabled)
-        lastAlertLevel = .none
+        resetAlertLevels()
 
         guard enabled else {
             notifications.clear()
+            notificationAuthorizationState = .unknown
             return
         }
-        notifications.requestAuthorization()
-        if let snapshot { evaluateWeeklyAlert(snapshot) }
+        Task {
+            notificationAuthorizationState = await notifications.authorizationState(requestIfNeeded: true)
+            if let snapshot { await evaluateAlerts(snapshot) }
+        }
     }
 
-    func setWeeklyWarningThreshold(_ threshold: Int) {
-        let value = min(
-            WeeklyAlertPolicy.warningThresholdRange.upperBound,
-            max(WeeklyAlertPolicy.criticalThreshold, threshold)
-        )
-        weeklyWarningThreshold = value
-        defaults.set(value, forKey: PreferenceKey.weeklyWarningThreshold)
-        lastAlertLevel = .none
-        if let snapshot { evaluateWeeklyAlert(snapshot) }
+    func setPrimaryWarningThreshold(_ threshold: Int) {
+        primaryWarningThreshold = clampedThreshold(threshold)
+        defaults.set(primaryWarningThreshold, forKey: PreferenceKey.primaryWarningThreshold)
+        lastPrimaryAlertLevel = .none
+    }
+
+    func setSecondaryWarningThreshold(_ threshold: Int) {
+        secondaryWarningThreshold = clampedThreshold(threshold)
+        defaults.set(secondaryWarningThreshold, forKey: PreferenceKey.secondaryWarningThreshold)
+        lastSecondaryAlertLevel = .none
+    }
+
+    func sendTestNotification() {
+        Task {
+            let state = await notifications.authorizationState(requestIfNeeded: true)
+            notificationAuthorizationState = state
+            guard state == .allowed else { return }
+            await notifications.sendTest(language: language)
+        }
+    }
+
+    func openNotificationSettings() {
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=\(Bundle.main.bundleIdentifier ?? "")"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 
     func setMenuBarBackgroundEnabled(_ enabled: Bool) {
         menuBarBackgroundEnabled = enabled
         defaults.set(enabled, forKey: PreferenceKey.menuBarBackgroundEnabled)
+    }
+
+    func setKeepAwakeEnabled(_ enabled: Bool) {
+        guard keepAwakeEnabled != enabled else { return }
+        keepAwakeEnabled = enabled
+
+        if let keepAwakeActivity {
+            ProcessInfo.processInfo.endActivity(keepAwakeActivity)
+            self.keepAwakeActivity = nil
+        }
+
+        if enabled {
+            keepAwakeActivity = ProcessInfo.processInfo.beginActivity(
+                options: [.idleSystemSleepDisabled],
+                reason: "Codex Usage Bar is keeping active tasks running"
+            )
+        }
     }
 
     private func applyAppAppearance() {
@@ -328,20 +407,63 @@ final class UsageViewModel: ObservableObject {
         clockTimer = timer
     }
 
-    private func evaluateWeeklyAlert(_ snapshot: UsageSnapshot) {
-        guard limitAlertsEnabled, let remaining = snapshot.secondary?.remainingPercent else {
-            lastAlertLevel = .none
+    private func evaluateAlerts(_ snapshot: UsageSnapshot) async {
+        guard limitAlertsEnabled else {
+            resetAlertLevels()
             return
         }
 
-        let level = WeeklyAlertPolicy.level(
-            remainingPercent: remaining,
-            warningThreshold: weeklyWarningThreshold
-        )
-        if level.rawValue > lastAlertLevel.rawValue, level != .none {
-            notifications.send(level: level, remainingPercent: remaining, language: language)
+        let state = await notifications.authorizationState(requestIfNeeded: true)
+        notificationAuthorizationState = state
+        guard state == .allowed else { return }
+
+        if let primary = snapshot.primary {
+            let level = LimitAlertPolicy.level(
+                remainingPercent: primary.remainingPercent,
+                warningThreshold: primaryWarningThreshold
+            )
+            if level.rawValue > lastPrimaryAlertLevel.rawValue, level != .none {
+                await notifications.send(
+                    identifier: "primary-limit-alert",
+                    level: level,
+                    window: primary,
+                    language: language
+                )
+            }
+            lastPrimaryAlertLevel = level
+        } else {
+            lastPrimaryAlertLevel = .none
         }
-        lastAlertLevel = level
+
+        if let secondary = snapshot.secondary {
+            let level = LimitAlertPolicy.level(
+                remainingPercent: secondary.remainingPercent,
+                warningThreshold: secondaryWarningThreshold
+            )
+            if level.rawValue > lastSecondaryAlertLevel.rawValue, level != .none {
+                await notifications.send(
+                    identifier: "secondary-limit-alert",
+                    level: level,
+                    window: secondary,
+                    language: language
+                )
+            }
+            lastSecondaryAlertLevel = level
+        } else {
+            lastSecondaryAlertLevel = .none
+        }
+    }
+
+    private func resetAlertLevels() {
+        lastPrimaryAlertLevel = .none
+        lastSecondaryAlertLevel = .none
+    }
+
+    private func clampedThreshold(_ threshold: Int) -> Int {
+        min(
+            LimitAlertPolicy.warningThresholdRange.upperBound,
+            max(LimitAlertPolicy.criticalThreshold, threshold)
+        )
     }
 
     private func menuBarPart(
@@ -366,8 +488,23 @@ private final class LimitNotificationService: NSObject, UNUserNotificationCenter
         center.delegate = self
     }
 
-    func requestAuthorization() {
-        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    func authorizationState(requestIfNeeded: Bool) async -> NotificationAuthorizationState {
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            return .allowed
+        case .denied:
+            return .denied
+        case .notDetermined:
+            guard requestIfNeeded else { return .unknown }
+            do {
+                return try await center.requestAuthorization(options: [.alert, .sound]) ? .allowed : .denied
+            } catch {
+                return .denied
+            }
+        @unknown default:
+            return .unknown
+        }
     }
 
     func clear() {
@@ -375,20 +512,38 @@ private final class LimitNotificationService: NSObject, UNUserNotificationCenter
         center.removeAllDeliveredNotifications()
     }
 
-    func send(level: WeeklyAlertLevel, remainingPercent: Int, language: AppLanguage) {
+    func send(
+        identifier: String,
+        level: LimitAlertLevel,
+        window: UsageWindow,
+        language: AppLanguage
+    ) async {
         let content = UNMutableNotificationContent()
+        let limitName = window.periodKind.title(language: language.usageDisplayLanguage)
         content.title = language.text(
-            level == .critical ? "Weekly limit is critical" : "Weekly limit is running low",
-            level == .critical ? "Недельный лимит почти исчерпан" : "Недельный лимит заканчивается"
+            level == .critical ? "\(limitName) is critical" : "\(limitName) is running low",
+            level == .critical ? "\(limitName) почти исчерпан" : "\(limitName) заканчивается"
         )
         content.body = language.text(
-            "\(remainingPercent)% remains until the weekly reset.",
-            "До недельного сброса осталось \(remainingPercent)%."
+            "\(window.remainingPercent)% remains until reset.",
+            "До сброса осталось \(window.remainingPercent)%."
         )
         content.sound = .default
-        center.add(
-            UNNotificationRequest(identifier: "weekly-limit-alert", content: content, trigger: nil),
-            withCompletionHandler: nil
+        try? await center.add(
+            UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        )
+    }
+
+    func sendTest(language: AppLanguage) async {
+        let content = UNMutableNotificationContent()
+        content.title = language.text("Codex Usage Bar notifications work", "Уведомления Codex Usage Bar работают")
+        content.body = language.text(
+            "You will be warned when a selected limit reaches its threshold.",
+            "Предупреждение появится, когда выбранный лимит достигнет заданного порога."
+        )
+        content.sound = .default
+        try? await center.add(
+            UNNotificationRequest(identifier: "limit-alert-test", content: content, trigger: nil)
         )
     }
 
