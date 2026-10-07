@@ -25,23 +25,41 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @MainActor
-private final class StatusItemController: NSObject, NSPopoverDelegate {
+private final class StatusItemController: NSObject {
+    private static let panelSize = NSSize(width: 392, height: 618)
+    private static let menuBarFillColor = NSColor(
+        srgbRed: 0.035,
+        green: 0.19,
+        blue: 0.36,
+        alpha: 1
+    )
+
     private let viewModel: UsageViewModel
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let popover = NSPopover()
+    private let panel: StatusPanel
     private var stateObserver: AnyCancellable?
-    private var outsideClickMonitor: Any?
+    private var globalClickMonitor: Any?
+    private var localClickMonitor: Any?
 
     init(viewModel: UsageViewModel) {
         self.viewModel = viewModel
+        self.panel = StatusPanel(contentRect: NSRect(origin: .zero, size: Self.panelSize))
         super.init()
 
         let hostingController = NSHostingController(rootView: UsageMenuView(viewModel: viewModel))
-        hostingController.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = hostingController
-        popover.behavior = .transient
-        popover.animates = true
-        popover.delegate = self
+        hostingController.view.frame = NSRect(origin: .zero, size: Self.panelSize)
+        hostingController.view.wantsLayer = true
+        hostingController.view.layer?.cornerRadius = 18
+        hostingController.view.layer?.cornerCurve = .continuous
+        hostingController.view.layer?.masksToBounds = true
+
+        panel.contentViewController = hostingController
+        panel.setContentSize(Self.panelSize)
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
 
         if let button = statusItem.button {
             button.target = self
@@ -59,41 +77,82 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     deinit {
-        if let outsideClickMonitor {
-            NSEvent.removeMonitor(outsideClickMonitor)
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+        }
+        if let localClickMonitor {
+            NSEvent.removeMonitor(localClickMonitor)
         }
         NSStatusBar.system.removeStatusItem(statusItem)
     }
 
     @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
-        if popover.isShown {
-            popover.performClose(nil)
+        if panel.isVisible {
+            closePanel()
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            startOutsideClickMonitor()
+            showPanel()
         }
     }
 
-    func popoverDidClose(_ notification: Notification) {
-        stopOutsideClickMonitor()
+    private func showPanel() {
+        guard let button = statusItem.button else { return }
+        positionPanel(below: button)
+        panel.makeKeyAndOrderFront(nil)
+        startOutsideClickMonitors()
     }
 
-    private func startOutsideClickMonitor() {
-        stopOutsideClickMonitor()
-        outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(
+    private func closePanel() {
+        panel.orderOut(nil)
+        stopOutsideClickMonitors()
+    }
+
+    private func positionPanel(below button: NSStatusBarButton) {
+        guard let buttonWindow = button.window else { return }
+        let windowRect = button.convert(button.bounds, to: nil)
+        let screenRect = buttonWindow.convertToScreen(windowRect)
+        let availableFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+
+        let preferredX = screenRect.maxX - Self.panelSize.width
+        let x = min(
+            max(preferredX, availableFrame.minX + 8),
+            availableFrame.maxX - Self.panelSize.width - 8
+        )
+        let y = max(
+            screenRect.minY - Self.panelSize.height - 2,
+            availableFrame.minY + 8
+        )
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+    }
+
+    private func startOutsideClickMonitors() {
+        stopOutsideClickMonitors()
+        globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
             DispatchQueue.main.async {
-                self?.popover.performClose(nil)
+                self?.closePanel()
             }
+        }
+
+        localClickMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
+            guard let self, self.panel.isVisible else { return event }
+            if event.window !== self.panel, event.window !== self.statusItem.button?.window {
+                self.closePanel()
+            }
+            return event
         }
     }
 
-    private func stopOutsideClickMonitor() {
-        if let outsideClickMonitor {
-            NSEvent.removeMonitor(outsideClickMonitor)
-            self.outsideClickMonitor = nil
+    private func stopOutsideClickMonitors() {
+        if let globalClickMonitor {
+            NSEvent.removeMonitor(globalClickMonitor)
+            self.globalClickMonitor = nil
+        }
+        if let localClickMonitor {
+            NSEvent.removeMonitor(localClickMonitor)
+            self.localClickMonitor = nil
         }
     }
 
@@ -153,16 +212,18 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
     private var titleAttributes: [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: NSColor.labelColor
+            .foregroundColor: viewModel.menuBarBackgroundEnabled ? NSColor.white : NSColor.labelColor
         ]
     }
 
     private func applyBackground(to button: NSStatusBarButton) {
         button.wantsLayer = true
-        button.layer?.cornerRadius = 6
+        button.layer?.cornerRadius = 7
+        button.layer?.cornerCurve = .continuous
         button.layer?.masksToBounds = true
+        button.contentTintColor = viewModel.menuBarBackgroundEnabled ? .white : nil
         button.layer?.backgroundColor = viewModel.menuBarBackgroundEnabled
-            ? viewModel.accentChoice.nsColor.withAlphaComponent(0.30).cgColor
+            ? Self.menuBarFillColor.cgColor
             : NSColor.clear.cgColor
     }
 
@@ -177,16 +238,18 @@ private final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 }
 
-private extension AccentChoice {
-    var nsColor: NSColor {
-        switch self {
-        case .blue: return .systemBlue
-        case .indigo: return .systemIndigo
-        case .purple: return .systemPurple
-        case .pink: return .systemPink
-        case .orange: return .systemOrange
-        case .green: return .systemGreen
-        case .teal: return .systemTeal
-        }
+private final class StatusPanel: NSPanel {
+    init(contentRect: NSRect) {
+        super.init(
+            contentRect: contentRect,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        isFloatingPanel = true
+        becomesKeyOnlyIfNeeded = true
     }
+
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
 }
