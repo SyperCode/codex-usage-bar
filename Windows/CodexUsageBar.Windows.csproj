@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>CodexUsageBar</AssemblyName>
     <RootNamespace>CodexUsageBar</RootNamespace>
-    <Version>0.2.11</Version>
+    <Version>0.2.12</Version>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>

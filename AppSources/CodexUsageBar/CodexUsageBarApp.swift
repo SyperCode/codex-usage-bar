@@ -27,12 +27,6 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 @MainActor
 private final class StatusItemController: NSObject {
     private static let panelSize = NSSize(width: 392, height: 618)
-    private static let menuBarFillColor = NSColor(
-        srgbRed: 0.035,
-        green: 0.19,
-        blue: 0.36,
-        alpha: 1
-    )
 
     private let viewModel: UsageViewModel
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -99,11 +93,13 @@ private final class StatusItemController: NSObject {
         positionPanel(below: button)
         panel.makeKeyAndOrderFront(nil)
         startOutsideClickMonitors()
+        updateStatusItem()
     }
 
     private func closePanel() {
         panel.orderOut(nil)
         stopOutsideClickMonitors()
+        updateStatusItem()
     }
 
     private func positionPanel(below button: NSStatusBarButton) {
@@ -213,19 +209,22 @@ private final class StatusItemController: NSObject {
     private var titleAttributes: [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: viewModel.menuBarBackgroundEnabled ? NSColor.white : NSColor.labelColor
+            .foregroundColor: showsNativeHighlight
+                ? NSColor.selectedMenuItemTextColor
+                : NSColor.labelColor
         ]
     }
 
     private func applyBackground(to button: NSStatusBarButton) {
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 7
-        button.layer?.cornerCurve = .continuous
-        button.layer?.masksToBounds = true
-        button.contentTintColor = viewModel.menuBarBackgroundEnabled ? .white : nil
-        button.layer?.backgroundColor = viewModel.menuBarBackgroundEnabled
-            ? Self.menuBarFillColor.cgColor
-            : NSColor.clear.cgColor
+        button.layer?.backgroundColor = NSColor.clear.cgColor
+        button.layer?.cornerRadius = 0
+        button.wantsLayer = false
+        button.contentTintColor = showsNativeHighlight ? .selectedMenuItemTextColor : nil
+        button.highlight(showsNativeHighlight)
+    }
+
+    private var showsNativeHighlight: Bool {
+        viewModel.menuBarBackgroundEnabled || panel.isVisible
     }
 
     private var accessibilityValue: String {
