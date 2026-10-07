@@ -371,7 +371,7 @@ internal sealed class TrayApplication : ApplicationContext
         var leadingWindow = usage.Primary ?? usage.Secondary;
         var value = leadingWindow switch {
             { Remaining: 0, ResetAt: { } resetAt } => "↻ " + Countdown(resetAt),
-            { } primaryLimit => $"{primaryLimit.Remaining}%",
+            { } leadingLimit => $"{leadingLimit.Remaining}%",
             _ => "—"
         };
         var label = leadingWindow is { } primary ? ShortLabel(primary) : T("limit", "лимит");
