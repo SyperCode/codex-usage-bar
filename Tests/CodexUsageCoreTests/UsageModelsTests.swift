@@ -54,6 +54,14 @@ final class UsageModelsTests: XCTestCase {
         )
     }
 
+    func testWeeklyAlertPolicyUsesWarningAndFixedCriticalThresholds() {
+        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 21, warningThreshold: 20), .none)
+        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 20, warningThreshold: 20), .warning)
+        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 11, warningThreshold: 90), .warning)
+        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 10, warningThreshold: 90), .critical)
+        XCTAssertEqual(WeeklyAlertPolicy.level(remainingPercent: 6, warningThreshold: 10), .critical)
+    }
+
     func testMenuBarTitlesStayCompactAndShowBothLimits() {
         let snapshot = UsageSnapshot(
             primary: UsageWindow(

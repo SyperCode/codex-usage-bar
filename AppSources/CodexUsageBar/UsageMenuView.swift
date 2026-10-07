@@ -200,10 +200,14 @@ struct UsageMenuView: View {
     }
 
     private var settings: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            appearanceSettings
-            behaviorSettings
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                appearanceSettings
+                behaviorSettings
+            }
         }
+        .scrollIndicators(.hidden)
+        .frame(maxHeight: 590)
     }
 
     private var appearanceSettings: some View {
@@ -294,6 +298,18 @@ struct UsageMenuView: View {
                     }
                 }
             }
+
+            Divider().opacity(0.42)
+
+            Toggle(
+                t("Menu bar background", "Подложка в строке меню"),
+                isOn: Binding(
+                    get: { viewModel.menuBarBackgroundEnabled },
+                    set: { viewModel.setMenuBarBackgroundEnabled($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
         }
         .padding(13)
         .glassPanel(cornerRadius: 14)
@@ -353,6 +369,53 @@ struct UsageMenuView: View {
                 }
                 .font(.caption)
             }
+
+            Divider().opacity(0.42)
+
+            Toggle(
+                t("Limit alerts", "Предупреждения о лимитах"),
+                isOn: Binding(
+                    get: { viewModel.limitAlertsEnabled },
+                    set: { viewModel.setLimitAlertsEnabled($0) }
+                )
+            )
+            .toggleStyle(.switch)
+            .controlSize(.small)
+
+            if viewModel.limitAlertsEnabled {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Label(t("Warning threshold", "Порог предупреждения"), systemImage: "bell.badge")
+                        Spacer()
+                        Text("\(viewModel.weeklyWarningThreshold)%")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.caption)
+
+                    Slider(
+                        value: Binding(
+                            get: { Double(viewModel.weeklyWarningThreshold) },
+                            set: { viewModel.setWeeklyWarningThreshold(Int($0)) }
+                        ),
+                        in: Double(WeeklyAlertPolicy.warningThresholdRange.lowerBound)...Double(WeeklyAlertPolicy.warningThresholdRange.upperBound),
+                        step: 5
+                    )
+                    .accessibilityLabel(t("Weekly warning threshold", "Порог предупреждения недельного лимита"))
+                    .accessibilityValue("\(viewModel.weeklyWarningThreshold)%")
+
+                    Text(
+                        t(
+                            "Critical alerts and the two-battery view start at 10%.",
+                            "Критическое предупреждение и две батарейки включаются при 10%."
+                        )
+                    )
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            Divider().opacity(0.42)
 
             Toggle(
                 t("Launch after macOS login", "Запускать после входа в macOS"),

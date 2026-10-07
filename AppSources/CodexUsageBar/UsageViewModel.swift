@@ -1,6 +1,7 @@
 import AppKit
 import CodexUsageCore
 import Foundation
+import UserNotifications
 
 @MainActor
 final class UsageViewModel: ObservableObject {
@@ -15,11 +16,16 @@ final class UsageViewModel: ObservableObject {
     @Published private(set) var language: AppLanguage
     @Published private(set) var theme: AppTheme
     @Published private(set) var accentChoice: AccentChoice
+    @Published private(set) var limitAlertsEnabled: Bool
+    @Published private(set) var weeklyWarningThreshold: Int
+    @Published private(set) var menuBarBackgroundEnabled: Bool
 
     private let service = CodexUsageService()
+    private let notifications = LimitNotificationService()
     private let defaults: UserDefaults
     private var refreshTimer: Timer?
     private var clockTimer: Timer?
+    private var lastAlertLevel: WeeklyAlertLevel = .none
 
     private enum PreferenceKey {
         static let displayMode = "menuBarDisplayMode"
@@ -28,6 +34,9 @@ final class UsageViewModel: ObservableObject {
         static let language = "appLanguage"
         static let theme = "appTheme"
         static let accentChoice = "accentChoice"
+        static let limitAlertsEnabled = "limitAlertsEnabled"
+        static let weeklyWarningThreshold = "weeklyWarningThreshold"
+        static let menuBarBackgroundEnabled = "menuBarBackgroundEnabled"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -53,8 +62,17 @@ final class UsageViewModel: ObservableObject {
         self.accentChoice = AccentChoice(
             rawValue: defaults.string(forKey: PreferenceKey.accentChoice) ?? ""
         ) ?? .indigo
+        self.limitAlertsEnabled = defaults.object(forKey: PreferenceKey.limitAlertsEnabled) == nil
+            ? true
+            : defaults.bool(forKey: PreferenceKey.limitAlertsEnabled)
+        let savedWarningThreshold = defaults.integer(forKey: PreferenceKey.weeklyWarningThreshold)
+        self.weeklyWarningThreshold = WeeklyAlertPolicy.warningThresholdRange.contains(savedWarningThreshold)
+            ? savedWarningThreshold
+            : WeeklyAlertPolicy.defaultWarningThreshold
+        self.menuBarBackgroundEnabled = defaults.bool(forKey: PreferenceKey.menuBarBackgroundEnabled)
 
         applyAppAppearance()
+        if limitAlertsEnabled { notifications.requestAuthorization() }
         Task { await refresh() }
         configureAutoRefreshTimer()
         configureClockTimer()
@@ -97,6 +115,24 @@ final class UsageViewModel: ObservableObject {
             .string(from: snapshot, mode: displayMode)
     }
 
+    var showsCriticalWeeklyStatus: Bool {
+        guard limitAlertsEnabled, let remaining = snapshot?.secondary?.remainingPercent else { return false }
+        return WeeklyAlertPolicy.level(
+            remainingPercent: remaining,
+            warningThreshold: weeklyWarningThreshold
+        ) == .critical
+    }
+
+    func batterySymbol(for percentage: Int) -> String {
+        switch percentage {
+        case 76...: return "battery.100percent"
+        case 51...: return "battery.75percent"
+        case 26...: return "battery.50percent"
+        case 11...: return "battery.25percent"
+        default: return "battery.0percent"
+        }
+    }
+
     var statusSymbol: String {
         guard let snapshot else {
             return lastError == nil ? "gauge.with.dots.needle.50percent" : "exclamationmark.triangle"
@@ -108,13 +144,7 @@ final class UsageViewModel: ObservableObject {
         }
 
         if displayMode == .battery, let percentage = snapshot.primary?.remainingPercent {
-            switch percentage {
-            case 76...: return "battery.100percent"
-            case 51...: return "battery.75percent"
-            case 26...: return "battery.50percent"
-            case 11...: return "battery.25percent"
-            default: return "battery.0percent"
-            }
+            return batterySymbol(for: percentage)
         }
 
         let visibleWindows = displayMode == .expanded
@@ -181,9 +211,11 @@ final class UsageViewModel: ObservableObject {
         isRefreshing = true
 
         do {
-            snapshot = try await service.fetch()
+            let updatedSnapshot = try await service.fetch()
+            snapshot = updatedSnapshot
             lastUpdated = Date()
             lastError = nil
+            evaluateWeeklyAlert(updatedSnapshot)
         } catch {
             lastError = error
         }
@@ -229,6 +261,35 @@ final class UsageViewModel: ObservableObject {
         defaults.set(accentChoice.rawValue, forKey: PreferenceKey.accentChoice)
     }
 
+    func setLimitAlertsEnabled(_ enabled: Bool) {
+        limitAlertsEnabled = enabled
+        defaults.set(enabled, forKey: PreferenceKey.limitAlertsEnabled)
+        lastAlertLevel = .none
+
+        guard enabled else {
+            notifications.clear()
+            return
+        }
+        notifications.requestAuthorization()
+        if let snapshot { evaluateWeeklyAlert(snapshot) }
+    }
+
+    func setWeeklyWarningThreshold(_ threshold: Int) {
+        let value = min(
+            WeeklyAlertPolicy.warningThresholdRange.upperBound,
+            max(WeeklyAlertPolicy.criticalThreshold, threshold)
+        )
+        weeklyWarningThreshold = value
+        defaults.set(value, forKey: PreferenceKey.weeklyWarningThreshold)
+        lastAlertLevel = .none
+        if let snapshot { evaluateWeeklyAlert(snapshot) }
+    }
+
+    func setMenuBarBackgroundEnabled(_ enabled: Bool) {
+        menuBarBackgroundEnabled = enabled
+        defaults.set(enabled, forKey: PreferenceKey.menuBarBackgroundEnabled)
+    }
+
     private func applyAppAppearance() {
         switch theme {
         case .system:
@@ -267,6 +328,22 @@ final class UsageViewModel: ObservableObject {
         clockTimer = timer
     }
 
+    private func evaluateWeeklyAlert(_ snapshot: UsageSnapshot) {
+        guard limitAlertsEnabled, let remaining = snapshot.secondary?.remainingPercent else {
+            lastAlertLevel = .none
+            return
+        }
+
+        let level = WeeklyAlertPolicy.level(
+            remainingPercent: remaining,
+            warningThreshold: weeklyWarningThreshold
+        )
+        if level.rawValue > lastAlertLevel.rawValue, level != .none {
+            notifications.send(level: level, remainingPercent: remaining, language: language)
+        }
+        lastAlertLevel = level
+    }
+
     private func menuBarPart(
         for window: UsageWindow,
         label: String,
@@ -279,4 +356,47 @@ final class UsageViewModel: ObservableObject {
         return "\(label) \(window.remainingPercent)%"
     }
 
+}
+
+private final class LimitNotificationService: NSObject, UNUserNotificationCenterDelegate {
+    private let center = UNUserNotificationCenter.current()
+
+    override init() {
+        super.init()
+        center.delegate = self
+    }
+
+    func requestAuthorization() {
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
+    func clear() {
+        center.removeAllPendingNotificationRequests()
+        center.removeAllDeliveredNotifications()
+    }
+
+    func send(level: WeeklyAlertLevel, remainingPercent: Int, language: AppLanguage) {
+        let content = UNMutableNotificationContent()
+        content.title = language.text(
+            level == .critical ? "Weekly limit is critical" : "Weekly limit is running low",
+            level == .critical ? "Недельный лимит почти исчерпан" : "Недельный лимит заканчивается"
+        )
+        content.body = language.text(
+            "\(remainingPercent)% remains until the weekly reset.",
+            "До недельного сброса осталось \(remainingPercent)%."
+        )
+        content.sound = .default
+        center.add(
+            UNNotificationRequest(identifier: "weekly-limit-alert", content: content, trigger: nil),
+            withCompletionHandler: nil
+        )
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound])
+    }
 }

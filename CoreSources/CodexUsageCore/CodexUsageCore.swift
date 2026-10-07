@@ -13,6 +13,24 @@ public enum MenuBarDisplayMode: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
 }
 
+public enum WeeklyAlertLevel: Int, Sendable {
+    case none
+    case warning
+    case critical
+}
+
+public enum WeeklyAlertPolicy {
+    public static let criticalThreshold = 10
+    public static let defaultWarningThreshold = 20
+    public static let warningThresholdRange = 10...90
+
+    public static func level(remainingPercent: Int, warningThreshold: Int) -> WeeklyAlertLevel {
+        if remainingPercent <= criticalThreshold { return .critical }
+        let threshold = min(warningThresholdRange.upperBound, max(criticalThreshold, warningThreshold))
+        return remainingPercent <= threshold ? .warning : .none
+    }
+}
+
 public struct UsageWindow: Equatable, Sendable {
     public let usedPercent: Int
     public let windowDurationMinutes: Int?
@@ -208,7 +226,7 @@ private final class AppServerSession: @unchecked Sendable {
         do {
             try process.run()
             let messages = [
-                #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-usage-bar","title":"Codex Usage Bar","version":"0.1.0"}}}"#,
+                #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-usage-bar","title":"Codex Usage Bar","version":"0.2.7"}}}"#,
                 #"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
                 #"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read","params":{}}"#
             ].joined(separator: "\n") + "\n"
