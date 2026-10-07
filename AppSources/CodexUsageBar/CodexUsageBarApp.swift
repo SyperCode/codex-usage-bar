@@ -112,16 +112,17 @@ private final class StatusItemController: NSObject {
         let screenRect = buttonWindow.convertToScreen(windowRect)
         let availableFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
 
-        let preferredX = screenRect.maxX - Self.panelSize.width
+        let preferredX = screenRect.minX
         let x = min(
             max(preferredX, availableFrame.minX + 8),
             availableFrame.maxX - Self.panelSize.width - 8
         )
-        let y = max(
-            screenRect.minY - Self.panelSize.height - 2,
-            availableFrame.minY + 8
+        let preferredTopY = min(screenRect.minY - 2, availableFrame.maxY - 2)
+        let topY = max(
+            preferredTopY,
+            availableFrame.minY + Self.panelSize.height + 8
         )
-        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        panel.setFrameTopLeftPoint(NSPoint(x: x, y: topY))
     }
 
     private func startOutsideClickMonitors() {
