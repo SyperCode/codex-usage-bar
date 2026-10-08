@@ -31,7 +31,6 @@ private final class StatusItemController: NSObject {
 
     private let viewModel: UsageViewModel
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-    private let statusContentView = StatusItemContentView()
     private let panel: StatusPanel
     private let panelSizeRelay = PanelSizeRelay()
     private var stateObserver: AnyCancellable?
@@ -75,26 +74,8 @@ private final class StatusItemController: NSObject {
             button.action = #selector(togglePopover)
             button.sendAction(on: [.leftMouseUp])
             button.title = ""
-            button.image = nil
-            button.addSubview(statusContentView)
-            statusContentView.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                statusContentView.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 6),
-                statusContentView.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -6),
-                statusContentView.topAnchor.constraint(equalTo: button.topAnchor),
-                statusContentView.bottomAnchor.constraint(equalTo: button.bottomAnchor)
-            ])
-            statusContentView.onPressChanged = { [weak self] isPressed in
-                guard let self, let button = self.statusItem.button else { return }
-                if isPressed {
-                    button.highlight(true)
-                } else {
-                    self.updateStatusItem()
-                }
-            }
-            statusContentView.onActivate = { [weak self] in
-                self?.togglePopover()
-            }
+            button.imagePosition = .imageOnly
+            button.imageScaling = .scaleNone
             button.setAccessibilityLabel(viewModel.language.text("Codex usage", "Лимиты Codex"))
         }
 
@@ -128,6 +109,9 @@ private final class StatusItemController: NSObject {
         panel.makeKeyAndOrderFront(nil)
         startOutsideClickMonitors()
         updateStatusItem()
+        if viewModel.autoRefreshEnabled {
+            Task { await viewModel.refresh() }
+        }
     }
 
     private func closePanel() {
@@ -181,8 +165,12 @@ private final class StatusItemController: NSObject {
         globalClickMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown]
         ) { [weak self] _ in
+            let clickLocation = NSEvent.mouseLocation
             DispatchQueue.main.async {
-                self?.closePanel()
+                guard let self,
+                      !self.statusItemScreenFrame.contains(clickLocation)
+                else { return }
+                self.closePanel()
             }
         }
 
@@ -208,6 +196,11 @@ private final class StatusItemController: NSObject {
         }
     }
 
+    private var statusItemScreenFrame: NSRect {
+        guard let button = statusItem.button, let window = button.window else { return .zero }
+        return window.convertToScreen(button.convert(button.bounds, to: nil))
+    }
+
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
 
@@ -227,17 +220,34 @@ private final class StatusItemController: NSObject {
         }
 
         applyBackground(to: button)
-        button.image = nil
-        button.alternateImage = nil
+        let image = statusImage(for: renderedContent)
+        button.image = image
+        button.alternateImage = image
         button.attributedTitle = NSAttributedString(string: "")
         button.attributedAlternateTitle = NSAttributedString(string: "")
-        statusContentView.attributedStringValue = renderedContent
         statusItem.length = max(
             NSStatusBar.system.thickness,
             ceil(renderedContent.size().width) + 12
         )
         button.setAccessibilityLabel(viewModel.language.text("Codex usage", "Лимиты Codex"))
         button.setAccessibilityValue(accessibilityValue)
+    }
+
+    private func statusImage(for content: NSAttributedString) -> NSImage {
+        let contentSize = content.size()
+        let imageSize = NSSize(
+            width: ceil(contentSize.width),
+            height: NSStatusBar.system.thickness
+        )
+        let image = NSImage(size: imageSize, flipped: false) { rect in
+            content.draw(at: NSPoint(
+                x: 0,
+                y: floor((rect.height - contentSize.height) / 2)
+            ))
+            return true
+        }
+        image.isTemplate = false
+        return image
     }
 
     private func criticalTitle(primary: UsageWindow, secondary: UsageWindow) -> NSAttributedString {
@@ -350,60 +360,6 @@ private final class PanelSizeRelay {
     func report(_ height: CGFloat) {
         latestHeight = height
         onHeightChange?(height)
-    }
-}
-
-private final class StatusItemContentView: NSView {
-    private let label = NSTextField(labelWithString: "")
-    var onActivate: (() -> Void)?
-    var onPressChanged: ((Bool) -> Void)?
-
-    var attributedStringValue: NSAttributedString {
-        get { label.attributedStringValue }
-        set { label.attributedStringValue = newValue }
-    }
-
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        label.isEditable = false
-        label.isSelectable = false
-        label.isBordered = false
-        label.drawsBackground = false
-        label.usesSingleLineMode = true
-        label.lineBreakMode = .byClipping
-        label.alignment = .center
-        setAccessibilityElement(false)
-        addSubview(label)
-        NSLayoutConstraint.activate([
-            label.centerXAnchor.constraint(equalTo: centerXAnchor),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor)
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        nil
-    }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
-    }
-
-    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
-        true
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        onPressChanged?(true)
-    }
-
-    override func mouseUp(with event: NSEvent) {
-        let localPoint = convert(event.locationInWindow, from: nil)
-        if bounds.contains(localPoint) {
-            onActivate?()
-        } else {
-            onPressChanged?(false)
-        }
     }
 }
 

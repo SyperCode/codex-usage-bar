@@ -303,7 +303,7 @@ private final class AppServerSession: @unchecked Sendable {
         do {
             try process.run()
             let messages = [
-                #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-usage-bar","title":"Codex Usage Bar","version":"0.2.16"}}}"#,
+                #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codex-usage-bar","title":"Codex Usage Bar","version":"0.2.17"}}}"#,
                 #"{"jsonrpc":"2.0","method":"initialized","params":{}}"#,
                 #"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read","params":{}}"#
             ].joined(separator: "\n") + "\n"
