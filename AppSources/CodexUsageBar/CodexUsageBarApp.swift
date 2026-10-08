@@ -191,27 +191,28 @@ private final class StatusItemController: NSObject {
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
 
+        let renderedImage: NSImage?
+        let renderedTitle: NSAttributedString
         if viewModel.showsCriticalSecondaryStatus,
            let primary = viewModel.snapshot?.primary,
            let secondary = viewModel.snapshot?.secondary {
-            button.image = nil
-            button.attributedTitle = criticalTitle(primary: primary, secondary: secondary)
+            renderedImage = nil
+            renderedTitle = criticalTitle(primary: primary, secondary: secondary)
         } else {
-            let image = NSImage(
-                systemSymbolName: viewModel.statusSymbol,
-                accessibilityDescription: nil
-            )
-            image?.isTemplate = true
-            button.image = image
-            button.attributedTitle = NSAttributedString(
+            renderedImage = whiteSymbol(named: viewModel.statusSymbol, pointSize: 12)
+            renderedTitle = NSAttributedString(
                 string: " \(viewModel.menuBarTitle(at: viewModel.currentDate))",
                 attributes: titleAttributes
             )
         }
 
+        applyBackground(to: button)
+        button.image = renderedImage
+        button.alternateImage = renderedImage
+        button.attributedTitle = renderedTitle
+        button.attributedAlternateTitle = renderedTitle
         button.setAccessibilityLabel(viewModel.language.text("Codex usage", "Лимиты Codex"))
         button.setAccessibilityValue(accessibilityValue)
-        applyBackground(to: button)
     }
 
     private func criticalTitle(primary: UsageWindow, secondary: UsageWindow) -> NSAttributedString {
@@ -255,15 +256,24 @@ private final class StatusItemController: NSObject {
     }
 
     private func symbolAttachment(named symbolName: String) -> NSAttributedString {
-        let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
+        let attachment = NSTextAttachment()
+        attachment.image = whiteSymbol(named: symbolName, pointSize: 11)
+        return NSAttributedString(attachment: attachment)
+    }
+
+    private func whiteSymbol(named symbolName: String, pointSize: CGFloat) -> NSImage? {
+        let sizeConfiguration = NSImage.SymbolConfiguration(
+            pointSize: pointSize,
+            weight: .medium
+        )
+        let whiteConfiguration = NSImage.SymbolConfiguration(paletteColors: [.white])
+        let configuration = sizeConfiguration.applying(whiteConfiguration)
         let image = NSImage(
             systemSymbolName: symbolName,
             accessibilityDescription: nil
         )?.withSymbolConfiguration(configuration)
-        image?.isTemplate = true
-        let attachment = NSTextAttachment()
-        attachment.image = image
-        return NSAttributedString(attachment: attachment)
+        image?.isTemplate = false
+        return image
     }
 
     private var titleAttributes: [NSAttributedString.Key: Any] {
