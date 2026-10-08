@@ -31,6 +31,7 @@ private final class StatusItemController: NSObject {
 
     private let viewModel: UsageViewModel
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let statusContentView = StatusItemContentView()
     private let panel: StatusPanel
     private let panelSizeRelay = PanelSizeRelay()
     private var stateObserver: AnyCancellable?
@@ -73,8 +74,16 @@ private final class StatusItemController: NSObject {
             button.target = self
             button.action = #selector(togglePopover)
             button.sendAction(on: [.leftMouseUp])
-            button.font = .systemFont(ofSize: 12, weight: .medium)
-            button.imagePosition = .imageLeading
+            button.title = ""
+            button.image = nil
+            button.addSubview(statusContentView)
+            statusContentView.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                statusContentView.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 6),
+                statusContentView.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -6),
+                statusContentView.topAnchor.constraint(equalTo: button.topAnchor),
+                statusContentView.bottomAnchor.constraint(equalTo: button.bottomAnchor)
+            ])
             button.setAccessibilityLabel(viewModel.language.text("Codex usage", "Лимиты Codex"))
         }
 
@@ -191,26 +200,31 @@ private final class StatusItemController: NSObject {
     private func updateStatusItem() {
         guard let button = statusItem.button else { return }
 
-        let renderedImage: NSImage?
-        let renderedTitle: NSAttributedString
+        let renderedContent: NSAttributedString
         if viewModel.showsCriticalSecondaryStatus,
            let primary = viewModel.snapshot?.primary,
            let secondary = viewModel.snapshot?.secondary {
-            renderedImage = nil
-            renderedTitle = criticalTitle(primary: primary, secondary: secondary)
+            renderedContent = criticalTitle(primary: primary, secondary: secondary)
         } else {
-            renderedImage = whiteSymbol(named: viewModel.statusSymbol, pointSize: 12)
-            renderedTitle = NSAttributedString(
+            let content = NSMutableAttributedString()
+            content.append(symbolAttachment(named: viewModel.statusSymbol, pointSize: 12))
+            content.append(NSAttributedString(
                 string: " \(viewModel.menuBarTitle(at: viewModel.currentDate))",
                 attributes: titleAttributes
-            )
+            ))
+            renderedContent = content
         }
 
         applyBackground(to: button)
-        button.image = renderedImage
-        button.alternateImage = renderedImage
-        button.attributedTitle = renderedTitle
-        button.attributedAlternateTitle = renderedTitle
+        button.image = nil
+        button.alternateImage = nil
+        button.attributedTitle = NSAttributedString(string: "")
+        button.attributedAlternateTitle = NSAttributedString(string: "")
+        statusContentView.attributedStringValue = renderedContent
+        statusItem.length = max(
+            NSStatusBar.system.thickness,
+            ceil(renderedContent.size().width) + 12
+        )
         button.setAccessibilityLabel(viewModel.language.text("Codex usage", "Лимиты Codex"))
         button.setAccessibilityValue(accessibilityValue)
     }
@@ -256,8 +270,12 @@ private final class StatusItemController: NSObject {
     }
 
     private func symbolAttachment(named symbolName: String) -> NSAttributedString {
+        symbolAttachment(named: symbolName, pointSize: 11)
+    }
+
+    private func symbolAttachment(named symbolName: String, pointSize: CGFloat) -> NSAttributedString {
         let attachment = NSTextAttachment()
-        attachment.image = whiteSymbol(named: symbolName, pointSize: 11)
+        attachment.image = whiteSymbol(named: symbolName, pointSize: pointSize)
         return NSAttributedString(attachment: attachment)
     }
 
@@ -321,6 +339,40 @@ private final class PanelSizeRelay {
     func report(_ height: CGFloat) {
         latestHeight = height
         onHeightChange?(height)
+    }
+}
+
+private final class StatusItemContentView: NSView {
+    private let label = NSTextField(labelWithString: "")
+
+    var attributedStringValue: NSAttributedString {
+        get { label.attributedStringValue }
+        set { label.attributedStringValue = newValue }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBordered = false
+        label.drawsBackground = false
+        label.usesSingleLineMode = true
+        label.lineBreakMode = .byClipping
+        label.alignment = .center
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 }
 
