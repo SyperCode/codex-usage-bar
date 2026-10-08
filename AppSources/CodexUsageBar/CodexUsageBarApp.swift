@@ -84,6 +84,17 @@ private final class StatusItemController: NSObject {
                 statusContentView.topAnchor.constraint(equalTo: button.topAnchor),
                 statusContentView.bottomAnchor.constraint(equalTo: button.bottomAnchor)
             ])
+            statusContentView.onPressChanged = { [weak self] isPressed in
+                guard let self, let button = self.statusItem.button else { return }
+                if isPressed {
+                    button.highlight(true)
+                } else {
+                    self.updateStatusItem()
+                }
+            }
+            statusContentView.onActivate = { [weak self] in
+                self?.togglePopover()
+            }
             button.setAccessibilityLabel(viewModel.language.text("Codex usage", "Лимиты Codex"))
         }
 
@@ -344,6 +355,8 @@ private final class PanelSizeRelay {
 
 private final class StatusItemContentView: NSView {
     private let label = NSTextField(labelWithString: "")
+    var onActivate: (() -> Void)?
+    var onPressChanged: ((Bool) -> Void)?
 
     var attributedStringValue: NSAttributedString {
         get { label.attributedStringValue }
@@ -360,6 +373,7 @@ private final class StatusItemContentView: NSView {
         label.usesSingleLineMode = true
         label.lineBreakMode = .byClipping
         label.alignment = .center
+        setAccessibilityElement(false)
         addSubview(label)
         NSLayoutConstraint.activate([
             label.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -372,7 +386,24 @@ private final class StatusItemContentView: NSView {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
+        bounds.contains(point) ? self : nil
+    }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onPressChanged?(true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        let localPoint = convert(event.locationInWindow, from: nil)
+        if bounds.contains(localPoint) {
+            onActivate?()
+        } else {
+            onPressChanged?(false)
+        }
     }
 }
 
