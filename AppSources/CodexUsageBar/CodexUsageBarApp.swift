@@ -26,34 +26,48 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
 
 @MainActor
 private final class StatusItemController: NSObject {
-    private static let panelSize = NSSize(width: 392, height: 618)
+    private static let panelWidth: CGFloat = 392
+    private static let initialPanelHeight: CGFloat = 618
 
     private let viewModel: UsageViewModel
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let panel: StatusPanel
+    private let panelSizeRelay = PanelSizeRelay()
     private var stateObserver: AnyCancellable?
     private var globalClickMonitor: Any?
     private var localClickMonitor: Any?
 
     init(viewModel: UsageViewModel) {
         self.viewModel = viewModel
-        self.panel = StatusPanel(contentRect: NSRect(origin: .zero, size: Self.panelSize))
+        let initialPanelSize = NSSize(
+            width: Self.panelWidth,
+            height: Self.initialPanelHeight
+        )
+        self.panel = StatusPanel(contentRect: NSRect(origin: .zero, size: initialPanelSize))
         super.init()
 
-        let hostingController = NSHostingController(rootView: UsageMenuView(viewModel: viewModel))
-        hostingController.view.frame = NSRect(origin: .zero, size: Self.panelSize)
+        let hostingController = NSHostingController(
+            rootView: UsageMenuView(viewModel: viewModel) { [weak panelSizeRelay] height in
+                panelSizeRelay?.report(height)
+            }
+        )
+        hostingController.view.frame = NSRect(origin: .zero, size: initialPanelSize)
         hostingController.view.wantsLayer = true
         hostingController.view.layer?.cornerRadius = 18
         hostingController.view.layer?.cornerCurve = .continuous
         hostingController.view.layer?.masksToBounds = true
 
         panel.contentViewController = hostingController
-        panel.setContentSize(Self.panelSize)
+        panel.setContentSize(initialPanelSize)
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.hasShadow = true
         panel.level = .popUpMenu
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
+
+        panelSizeRelay.onHeightChange = { [weak self] height in
+            self?.resizePanel(toContentHeight: height)
+        }
 
         if let button = statusItem.button {
             button.target = self
@@ -111,14 +125,35 @@ private final class StatusItemController: NSObject {
         let preferredX = screenRect.minX
         let x = min(
             max(preferredX, availableFrame.minX + 8),
-            availableFrame.maxX - Self.panelSize.width - 8
+            availableFrame.maxX - panel.frame.width - 8
         )
         let preferredTopY = min(screenRect.minY - 2, availableFrame.maxY - 2)
         let topY = max(
             preferredTopY,
-            availableFrame.minY + Self.panelSize.height + 8
+            availableFrame.minY + panel.frame.height + 8
         )
         panel.setFrameTopLeftPoint(NSPoint(x: x, y: topY))
+    }
+
+    private func resizePanel(toContentHeight contentHeight: CGFloat) {
+        guard contentHeight.isFinite, contentHeight > 0 else { return }
+
+        let screen = statusItem.button?.window?.screen ?? panel.screen ?? NSScreen.main
+        let maximumHeight = max(
+            1,
+            (screen?.visibleFrame.height ?? contentHeight) - 16
+        )
+        let targetHeight = min(ceil(contentHeight), maximumHeight)
+        guard abs(panel.frame.height - targetHeight) > 0.5 else { return }
+
+        let previousTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        panel.setContentSize(NSSize(width: Self.panelWidth, height: targetHeight))
+
+        if panel.isVisible, let button = statusItem.button {
+            positionPanel(below: button)
+        } else {
+            panel.setFrameTopLeftPoint(previousTopLeft)
+        }
     }
 
     private func startOutsideClickMonitors() {
@@ -181,23 +216,48 @@ private final class StatusItemController: NSObject {
 
     private func criticalTitle(primary: UsageWindow, secondary: UsageWindow) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        result.append(batteryAttachment(percentage: primary.remainingPercent))
+        result.append(statusAttachment(for: primary))
         result.append(NSAttributedString(
-            string: " \(viewModel.shortLabel(for: primary)) \(primary.remainingPercent)% · ",
+            string: " \(statusText(for: primary)) · ",
             attributes: titleAttributes
         ))
-        result.append(batteryAttachment(percentage: secondary.remainingPercent))
+        result.append(statusAttachment(for: secondary))
         result.append(NSAttributedString(
-            string: " \(viewModel.shortLabel(for: secondary)) \(secondary.remainingPercent)%",
+            string: " \(statusText(for: secondary))",
             attributes: titleAttributes
         ))
         return result
     }
 
+    private func statusAttachment(for window: UsageWindow) -> NSAttributedString {
+        if window.remainingPercent == 0 {
+            return symbolAttachment(named: "arrow.clockwise")
+        }
+        return batteryAttachment(percentage: window.remainingPercent)
+    }
+
+    private func statusText(for window: UsageWindow) -> String {
+        let label = viewModel.shortLabel(for: window)
+        guard window.remainingPercent == 0, let resetDate = window.resetsAt else {
+            return "\(label) \(window.remainingPercent)%"
+        }
+
+        let countdown = LimitCountdownFormatter.compact(
+            until: resetDate,
+            now: viewModel.currentDate,
+            language: viewModel.language
+        )
+        return "\(label) \(countdown)"
+    }
+
     private func batteryAttachment(percentage: Int) -> NSAttributedString {
+        symbolAttachment(named: viewModel.batterySymbol(for: percentage))
+    }
+
+    private func symbolAttachment(named symbolName: String) -> NSAttributedString {
         let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         let image = NSImage(
-            systemSymbolName: viewModel.batterySymbol(for: percentage),
+            systemSymbolName: symbolName,
             accessibilityDescription: nil
         )?.withSymbolConfiguration(configuration)
         image?.isTemplate = true
@@ -209,9 +269,7 @@ private final class StatusItemController: NSObject {
     private var titleAttributes: [NSAttributedString.Key: Any] {
         [
             .font: NSFont.systemFont(ofSize: 12, weight: .medium),
-            .foregroundColor: showsNativeHighlight
-                ? NSColor.selectedMenuItemTextColor
-                : NSColor.labelColor
+            .foregroundColor: NSColor.white
         ]
     }
 
@@ -219,7 +277,7 @@ private final class StatusItemController: NSObject {
         button.layer?.backgroundColor = NSColor.clear.cgColor
         button.layer?.cornerRadius = 0
         button.wantsLayer = false
-        button.contentTintColor = showsNativeHighlight ? .selectedMenuItemTextColor : nil
+        button.contentTintColor = .white
         button.highlight(showsNativeHighlight)
     }
 
@@ -235,6 +293,24 @@ private final class StatusItemController: NSObject {
 
         return "\(viewModel.title(for: primary)) \(primary.remainingPercent)%, "
             + "\(viewModel.title(for: secondary)) \(secondary.remainingPercent)%"
+    }
+}
+
+@MainActor
+private final class PanelSizeRelay {
+    var onHeightChange: ((CGFloat) -> Void)? {
+        didSet {
+            if let latestHeight {
+                onHeightChange?(latestHeight)
+            }
+        }
+    }
+
+    private var latestHeight: CGFloat?
+
+    func report(_ height: CGFloat) {
+        latestHeight = height
+        onHeightChange?(height)
     }
 }
 

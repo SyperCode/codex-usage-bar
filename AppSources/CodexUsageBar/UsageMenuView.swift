@@ -4,9 +4,18 @@ import SwiftUI
 
 struct UsageMenuView: View {
     @ObservedObject var viewModel: UsageViewModel
+    let onContentHeightChange: (CGFloat) -> Void
     @StateObject private var launchAtLogin = LaunchAtLoginController()
     @Environment(\.colorScheme) private var effectiveColorScheme
     @State private var selectedTab: PopoverTab = .overview
+
+    init(
+        viewModel: UsageViewModel,
+        onContentHeightChange: @escaping (CGFloat) -> Void = { _ in }
+    ) {
+        self.viewModel = viewModel
+        self.onContentHeightChange = onContentHeightChange
+    }
 
     var body: some View {
         ZStack {
@@ -31,9 +40,23 @@ struct UsageMenuView: View {
             .padding(16)
         }
         .frame(width: 392)
+        .fixedSize(horizontal: false, vertical: true)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(
+                    key: ContentHeightPreferenceKey.self,
+                    value: proxy.size.height
+                )
+            }
+        }
+        .onPreferenceChange(ContentHeightPreferenceKey.self) { height in
+            DispatchQueue.main.async {
+                onContentHeightChange(height)
+            }
+        }
         .tint(viewModel.accentChoice.color)
         .preferredColorScheme(viewModel.theme.colorScheme)
-        .animation(.snappy(duration: 0.24), value: selectedTab)
+        .animation(.easeOut(duration: 0.16), value: selectedTab)
     }
 
     private var background: some View {
@@ -669,6 +692,14 @@ struct UsageMenuView: View {
 
     private func t(_ english: String, _ russian: String) -> String {
         viewModel.language.text(english, russian)
+    }
+}
+
+private struct ContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
